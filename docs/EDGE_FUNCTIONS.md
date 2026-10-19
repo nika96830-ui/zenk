@@ -1,4 +1,4 @@
-# ZANG — Supabase Edge Functions
+# Zenk — Supabase Edge Functions
 
 OpenAI key only on Supabase Secrets — never in Vercel or the browser.
 

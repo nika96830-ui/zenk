@@ -1,6 +1,6 @@
-# ZANG — Stripe
+# Zenk — Stripe
 
-Account: **SeyrA** — **live mode** (account ID is intentionally not stored in the repo)
+Account: Zenk Stripe account — **live mode** (account ID is intentionally not stored in the repo)
 
 ## Products created
 
