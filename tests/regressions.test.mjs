@@ -1,0 +1,11 @@
+import assert from 'node:assert/strict';
+import { readFileSync } from 'node:fs';
+import { createRequire } from 'node:module';
+import test from 'node:test';
+import vm from 'node:vm';
+const require=createRequire(import.meta.url);const ts=require('typescript');const source=(path)=>readFileSync(new URL(path,import.meta.url),'utf8');
+function loadMapMeeting(){const compiled=ts.transpileModule(source('../src/lib/mapMeeting.ts'),{compilerOptions:{module:ts.ModuleKind.CommonJS,target:ts.ScriptTarget.ES2022}}).outputText;const context={exports:{}};vm.runInNewContext(compiled,context);return context.exports;}
+test('failed meetings stay failed instead of being mapped to ready',()=>{const {mapStatus,mapMeeting}=loadMapMeeting();assert.equal(mapStatus('failed'),'failed');assert.equal(mapMeeting({id:'m-1',status:'failed'}).status,'failed');assert.equal(mapStatus('completed'),'ready');});
+test('offline loading never injects demo meetings after a failed request',()=>{const code=source('../src/hooks/useOffline.ts');assert.doesNotMatch(code,/DEMO_MEETINGS/);assert.match(code,/\.catch\(\(\) => \{\}\)/);});
+test('microphone tracks are stopped only by the unmount cleanup',()=>{const code=source('../src/pages/Record.tsx');assert.match(code,/useEffect\(\(\) => \(\) => \{\s*streamRef\.current\?\.getTracks\(\)\.forEach\(\(track\) => track\.stop\(\)\);\s*\}, \[\]\)/);assert.doesNotMatch(code,/setIsPaused\(true\)[\s\S]{0,180}track\.stop\(\)/);});
+test('migration and processor enforce private quota-backed recordings',()=>{const migration=source('../supabase/migrations/20261019000000_zenk_security_usage.sql');const processor=source('../supabase/functions/process-meeting/index.ts');assert.match(migration,/protect_profile_billing_fields/);assert.match(migration,/reserve_meeting_usage/);assert.match(migration,/file_size_limit/);assert.match(processor,/25 \* 1024 \* 1024/);assert.match(processor,/reserve_meeting_usage/);assert.match(processor,/Access-Control-Allow-Origin/);});
