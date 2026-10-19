@@ -15,7 +15,6 @@ jobs:
         with:
           node-version: 22
           cache: npm
-      - run: npm install --package-lock-only --ignore-scripts --no-audit --no-fund
       - run: npm ci
       - run: npx tsc --noEmit
       - run: npx vite build
