@@ -1,0 +1,25 @@
+# Dependabot for Zenk.
+# - All @capacitor/* packages are updated together in one PR (core and plugins
+#   must stay on the same major version).
+# - All other minor/patch updates are grouped into one PR.
+# - Major updates of other packages arrive as separate PRs.
+# - Nothing is auto-merged: every PR (especially majors) needs manual review.
+version: 2
+updates:
+  - package-ecosystem: "npm"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+    open-pull-requests-limit: 10
+    groups:
+      capacitor:
+        patterns:
+          - "@capacitor/*"
+      minor-and-patch:
+        patterns:
+          - "*"
+        exclude-patterns:
+          - "@capacitor/*"
+        update-types:
+          - "minor"
+          - "patch"
