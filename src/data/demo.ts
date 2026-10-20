@@ -8,6 +8,7 @@ export const DEMO_MEETINGS: Meeting[] = [
     duration: '32 min',
     status: 'ready',
     participants: ['Alina', 'Igor', 'Maria'],
+    decisions: [],
     summary: 'Discussed landing launch and ad budget. Close designs by Wednesday, launch ads Friday.',
     tasks: [
       { id: 't1', title: 'Close landing', assignee: 'Alina', deadline: 'Fri', done: false },
