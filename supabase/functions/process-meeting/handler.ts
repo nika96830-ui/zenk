@@ -3,7 +3,7 @@ import type { SupabaseClient } from 'https://esm.sh/@supabase/supabase-js@2';
 type Dependencies = {
   clientFor: (authorization: string) => SupabaseClient;
   openAiKey: () => string | undefined;
-  reserveUsage: (userId: string, meetingId: string, plan: string, periodStart: string) => Promise<boolean>;
+  reserveUsage: (userId: string, meetingId: string, quota: number, periodStart: string) => Promise<boolean>;
   fetch: typeof fetch;
 };
 
@@ -112,7 +112,7 @@ export async function handleProcessMeeting(req: Request, deps: Dependencies): Pr
     const now = new Date();
     const periodStart = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), 1))
       .toISOString().slice(0, 10);
-    const reserved = await deps.reserveUsage(user.id, meetingId, plan, periodStart);
+    const reserved = await deps.reserveUsage(user.id, meetingId, quota, periodStart);
     if (!reserved) return json({ error: 'Monthly meeting limit reached' }, 429);
 
     stage = 'mark-processing';
