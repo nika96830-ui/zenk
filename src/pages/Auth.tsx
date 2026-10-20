@@ -12,23 +12,41 @@ export function AuthPage() {
   const [password, setPassword] = useState('');
   const [fullName, setFullName] = useState('');
   const [error, setError] = useState('');
+  const [info, setInfo] = useState('');
   const [loading, setLoading] = useState(false);
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setError('');
+    setInfo('');
     setLoading(true);
-    await hapticLight();
+
     try {
-      if (mode === 'login') await login(email, password);
-      else await register(email, password, fullName);
-      await hapticSuccess();
-    } catch (err: any) {
-      setError(err.message || t.auth.error);
-      await hapticError();
+      await hapticLight().catch(() => undefined);
+      if (mode === 'login') {
+        const result = await login(email, password);
+        if (!result.session) {
+          setError(t.auth.sessionMissing);
+          return;
+        }
+      } else {
+        const result = await register(email, password, fullName);
+        if (!result.session) setInfo(t.auth.emailConfirmationSent);
+      }
+      await hapticSuccess().catch(() => undefined);
+    } catch (err: unknown) {
+      const message = err instanceof Error ? err.message : t.auth.error;
+      setError(message || t.auth.error);
+      await hapticError().catch(() => undefined);
     } finally {
       setLoading(false);
     }
+  };
+
+  const switchMode = () => {
+    setMode(mode === 'login' ? 'register' : 'login');
+    setError('');
+    setInfo('');
   };
 
   return (
@@ -49,12 +67,13 @@ export function AuthPage() {
         )}
         <input type="email" placeholder={t.auth.email} value={email} onChange={(e) => setEmail(e.target.value)} required style={inputStyle} />
         <input type="password" placeholder={t.auth.password} value={password} onChange={(e) => setPassword(e.target.value)} required minLength={6} style={inputStyle} />
-        {error && <p style={{ color: 'var(--danger)', fontSize: '0.9rem', textAlign: 'center' }}>{error}</p>}
+        {info && <p role="status" aria-live="polite" style={{ color: 'var(--forest)', fontSize: '0.9rem', textAlign: 'center' }}>{info}</p>}
+        {error && <p role="alert" aria-live="assertive" style={{ color: 'var(--danger)', fontSize: '0.9rem', textAlign: 'center' }}>{error}</p>}
         <button type="submit" className="btn btn-primary btn-block" disabled={loading} style={{ marginTop: 8 }}>
           {loading ? t.loading : mode === 'login' ? t.auth.login : t.auth.register}
         </button>
       </form>
-      <button onClick={() => { setMode(mode === 'login' ? 'register' : 'login'); setError(''); }} style={{ marginTop: 24, color: 'var(--forest)', fontWeight: 600, fontSize: '0.95rem', background: 'none', border: 'none' }}>
+      <button onClick={switchMode} style={{ marginTop: 24, color: 'var(--forest)', fontWeight: 600, fontSize: '0.95rem', background: 'none', border: 'none' }}>
         {mode === 'login' ? t.auth.noAccount : t.auth.hasAccount}
       </button>
     </div>
