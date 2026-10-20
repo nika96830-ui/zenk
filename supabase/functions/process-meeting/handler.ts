@@ -149,7 +149,8 @@ export async function handleProcessMeeting(req: Request, deps: Dependencies): Pr
     providerStatus = undefined;
     const { error: saveError } = await client.from('meetings').update({
       title: analysis.title || meeting.title || 'Meeting',
-      transcript, summary: analysis.summary || transcript.slice(0, 500),\n      decisions: typeof analysis.decisions === 'string' ? analysis.decisions.slice(0, 10000) : '',
+      transcript, summary: analysis.summary || transcript.slice(0, 500),
+      decisions: typeof analysis.decisions === 'string' ? analysis.decisions.slice(0, 10000) : '',
       status: 'completed', updated_at: new Date().toISOString(),
     }).eq('id', meetingId).eq('user_id', user.id);
     if (saveError) throw new Error('Save failed');
