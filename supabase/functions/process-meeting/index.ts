@@ -8,7 +8,7 @@ const MIME_TYPES: Record<string, { extension: string; mime: string }> = {
   wav: { extension: 'wav', mime: 'audio/wav' }, mp3: { extension: 'mp3', mime: 'audio/mpeg' }, mpeg: { extension: 'mpeg', mime: 'audio/mpeg' },
 };
 const EXTENSIONS_BY_MIME: Record<string, string> = { 'audio/webm': 'webm', 'audio/mp4': 'm4a', 'audio/aac': 'aac', 'audio/ogg': 'ogg', 'audio/wav': 'wav', 'audio/x-wav': 'wav', 'audio/mpeg': 'mp3' };
-const PLAN_QUOTAS: Record<string, number> = { free: 5, freelance: 100, team: 500 };
+const MONTHLY_MEETING_QUOTA = 5;
 
 function corsHeaders(origin: string) { return { 'Access-Control-Allow-Origin': origin, 'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type', 'Access-Control-Allow-Methods': 'POST, OPTIONS', Vary: 'Origin' }; }
 function configuredOrigin(): string { const configured = Deno.env.get('ALLOWED_ORIGIN'); if (!configured) throw new Error('ALLOWED_ORIGIN is not configured'); return new URL(configured).origin; }
@@ -37,9 +37,8 @@ serve(async (req) => {
     const pathExtension = path.split('.').pop()?.toLowerCase() || ''; const declaredType = fileData.type.split(';')[0].toLowerCase(); const extensionFromType = EXTENSIONS_BY_MIME[declaredType];
     const fileFormat = extensionFromType ? { extension: extensionFromType, mime: declaredType === 'audio/x-wav' ? 'audio/wav' : declaredType } : MIME_TYPES[pathExtension];
     if (!fileFormat) throw new Error('Unsupported audio format');
-    const { data: profile, error: profileError } = await admin.from('profiles').select('plan').eq('id', user.id).maybeSingle(); if (profileError) throw new Error('Unable to read account plan');
-    const quota = PLAN_QUOTAS[profile?.plan || 'free'] || PLAN_QUOTAS.free; const periodStart = new Date(); periodStart.setUTCDate(1); periodStart.setUTCHours(0, 0, 0, 0);
-    const { data: allowed, error: quotaError } = await admin.rpc('reserve_meeting_usage', { p_user_id: user.id, p_meeting_id: meetingId, p_period_start: periodStart.toISOString().slice(0, 10), p_quota: quota });
+    const periodStart = new Date(); periodStart.setUTCDate(1); periodStart.setUTCHours(0, 0, 0, 0);
+    const { data: allowed, error: quotaError } = await admin.rpc('reserve_meeting_usage', { p_user_id: user.id, p_meeting_id: meetingId, p_period_start: periodStart.toISOString().slice(0, 10), p_quota: MONTHLY_MEETING_QUOTA });
     if (quotaError) throw new Error('Unable to check meeting quota'); if (!allowed) throw new Error('Monthly meeting quota exceeded');
     const whisperLanguage = ['ru', 'en', 'tr', 'az'].includes(language) ? language : 'ru'; const form = new FormData(); const filename = path.split('/').pop() || `recording.${fileFormat.extension}`;
     form.append('file', new File([fileData], filename, { type: fileFormat.mime })); form.append('model', 'whisper-1'); form.append('language', whisperLanguage);
