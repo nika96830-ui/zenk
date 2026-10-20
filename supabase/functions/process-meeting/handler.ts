@@ -97,6 +97,7 @@ export async function handleProcessMeeting(req: Request, deps: Dependencies): Pr
     const { data: audio, error: downloadError } = await client.storage
       .from('recordings').download(path);
     if (downloadError || !audio) return json({ error: 'Recording unavailable' }, 404);
+    if (audio.size > 25 * 1024 * 1024) return json({ error: 'Recording too large' }, 413);
 
     stage = 'mark-processing';
     const { error: startError } = await client.from('meetings')
