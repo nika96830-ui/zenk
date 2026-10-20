@@ -2,7 +2,7 @@
 
 Zenk — AI assistant for work meetings: record, transcribe, summarize, extract tasks.
 
-Languages: AZ | EN | TR | RU. Prices in AZN.
+Languages: AZ | EN | TR | RU. The initial release has no payment or subscription features.
 
 ## Setup
 
@@ -10,7 +10,7 @@ Full step-by-step guide: [SETUP.md](SETUP.md).
 
 1. Copy `.env.example` to `.env` and set Supabase URL + anon key.
 2. Run `supabase-schema.sql` in Supabase SQL Editor.
-3. Deploy Edge Functions `process-meeting`, `export-tasks`, `create-checkout`, `stripe-webhook`.
+3. Deploy Edge Functions `process-meeting`, `export-tasks`.
 4. Set secret `OPENAI_API_KEY` in Supabase (not in client).
 
 ```bash
@@ -29,7 +29,6 @@ Framework: Vite.
 ## Docs
 
 - [docs/EDGE_FUNCTIONS.md](docs/EDGE_FUNCTIONS.md) — Supabase Edge Functions
-- [docs/STRIPE.md](docs/STRIPE.md) — Stripe billing
 
 ## History and backups
 
