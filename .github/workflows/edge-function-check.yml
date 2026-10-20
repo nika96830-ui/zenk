@@ -1,0 +1,28 @@
+name: Edge Function typecheck
+
+on:
+  pull_request:
+    paths:
+      - "supabase/functions/process-meeting/**"
+      - "supabase/functions/export-tasks/**"
+      - ".github/workflows/edge-function-check.yml"
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  typecheck:
+    name: Compile Supabase Edge Functions
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: denoland/setup-deno@v2
+        with:
+          deno-version: v2.x
+      - name: Check process-meeting
+        run: deno check supabase/functions/process-meeting/index.ts supabase/functions/process-meeting/handler.ts
+      - name: Check export-tasks
+        run: deno check supabase/functions/export-tasks/index.ts

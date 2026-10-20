@@ -8,22 +8,40 @@ export function useAuth() {
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
-    getSession().then((s) => {
-      setSession(s);
-      setUser(s?.user ?? null);
+    let active = true;
+    let receivedAuthEvent = false;
+
+    const subscription = onAuthStateChange((_event, nextSession) => {
+      receivedAuthEvent = true;
+      if (!active) return;
+      setSession(nextSession);
+      setUser(nextSession?.user ?? null);
       setLoading(false);
     });
-    const subscription = onAuthStateChange((_event, s) => {
-      setSession(s);
-      setUser(s?.user ?? null);
-      setLoading(false);
-    });
-    return () => { subscription.unsubscribe(); };
+
+    getSession()
+      .then((initialSession) => {
+        if (!active || receivedAuthEvent) return;
+        setSession(initialSession);
+        setUser(initialSession?.user ?? null);
+        setLoading(false);
+      })
+      .catch(() => {
+        if (!active || receivedAuthEvent) return;
+        setSession(null);
+        setUser(null);
+        setLoading(false);
+      });
+
+    return () => {
+      active = false;
+      subscription.unsubscribe();
+    };
   }, []);
 
   const login = useCallback(async (email: string, password: string) => signIn(email, password), []);
   const register = useCallback(async (email: string, password: string, fullName?: string) => signUp(email, password, fullName), []);
   const logout = useCallback(async () => { await signOut(); }, []);
 
-  return { user, session, loading, isAuthenticated: !!user, login, register, logout };
+  return { user, session, loading, isAuthenticated: !!session && !!user, login, register, logout };
 }
