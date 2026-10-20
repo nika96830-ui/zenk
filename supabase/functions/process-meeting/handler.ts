@@ -6,20 +6,21 @@ type Dependencies = {
   fetch: typeof fetch;
 };
 
-const allowedOrigin = Deno.env.get('ALLOWED_ORIGIN') || 'https://zenk-zangui.vercel.app';
-const corsHeaders = {
-  'Access-Control-Allow-Origin': allowedOrigin,
-  'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type',
-  'Access-Control-Allow-Methods': 'POST, OPTIONS',
-  'Cache-Control': 'no-store',
-  'X-Zang-Audio-Guard': 'owner-bound-rls',
-};
-
-function json(body: unknown, status = 200, diagnosticHeaders: Record<string, string> = {}) {
-  return new Response(JSON.stringify(body), {
-    status,
-    headers: { ...corsHeaders, ...diagnosticHeaders, 'Content-Type': 'application/json' },
-  });
+const allowedOrigins = new Set(
+  (Deno.env.get('ALLOWED_ORIGIN') || 'https://zenk-zangui.vercel.app')
+    .split(',')
+    .map((origin) => origin.trim())
+    .filter(Boolean),
+);
+function corsHeaders(origin: string | null) {
+  return {
+    ...(origin && allowedOrigins.has(origin) ? { 'Access-Control-Allow-Origin': origin } : {}),
+    'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type',
+    'Access-Control-Allow-Methods': 'POST, OPTIONS',
+    'Cache-Control': 'no-store',
+    'Vary': 'Origin',
+    'X-Zang-Audio-Guard': 'owner-bound-rls',
+  };
 }
 
 async function safeProviderCode(response: Response): Promise<string> {
@@ -40,8 +41,13 @@ export function isOwnedAudioPath(path: unknown, userId: string): path is string 
 
 export async function handleProcessMeeting(req: Request, deps: Dependencies): Promise<Response> {
   const requestOrigin = req.headers.get('Origin');
-  if (requestOrigin && requestOrigin !== allowedOrigin) return new Response('Origin not allowed', { status: 403 });
-  if (req.method === 'OPTIONS') return new Response('ok', { headers: corsHeaders });
+  if (requestOrigin && !allowedOrigins.has(requestOrigin)) return new Response('Origin not allowed', { status: 403 });
+  if (req.method === 'OPTIONS') return new Response('ok', { headers: corsHeaders(requestOrigin) });
+  const json = (body: unknown, status = 200, diagnosticHeaders: Record<string, string> = {}) =>
+    new Response(JSON.stringify(body), {
+      status,
+      headers: { ...corsHeaders(requestOrigin), ...diagnosticHeaders, 'Content-Type': 'application/json' },
+    });
   if (req.method !== 'POST') return json({ error: 'Method not allowed' }, 405);
   const authorization = req.headers.get('Authorization') || '';
   if (!/^Bearer\s+\S+$/i.test(authorization)) return json({ error: 'Unauthorized' }, 401);
