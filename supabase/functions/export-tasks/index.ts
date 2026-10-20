@@ -1,86 +1,53 @@
 import { serve } from 'https://deno.land/std@0.168.0/http/server.ts';
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2';
 
+const allowedOrigin = Deno.env.get('ALLOWED_ORIGIN') || 'https://zenk-zangui.vercel.app';
 const corsHeaders = {
-  'Access-Control-Allow-Origin': '*',
+  'Access-Control-Allow-Origin': allowedOrigin,
   'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type',
+  'Access-Control-Allow-Methods': 'POST, OPTIONS',
+  'Cache-Control': 'no-store',
+  'Vary': 'Origin',
 };
-
+function json(body: unknown, status = 200) {
+  return new Response(JSON.stringify(body), { status, headers: { ...corsHeaders, 'Content-Type': 'application/json' } });
+}
+const cell = (value: unknown) => {
+  const raw = String(value ?? '');
+  const safe = /^[=+@\-\t\r]/.test(raw) ? `'${raw}` : raw;
+  return `"${safe.replace(/"/g, '""')}"`;
+};
 serve(async (req) => {
-  if (req.method === 'OPTIONS') {
-    return new Response('ok', { headers: corsHeaders });
-  }
-
+  const origin = req.headers.get('Origin');
+  if (origin && origin !== allowedOrigin) return new Response('Origin not allowed', { status: 403 });
+  if (req.method === 'OPTIONS') return new Response('ok', { headers: corsHeaders });
+  if (req.method !== 'POST') return json({ success: false, message: 'Method not allowed' }, 405);
   try {
-    const authHeader = req.headers.get('Authorization');
-    if (!authHeader) {
-      return new Response(JSON.stringify({ success: false, message: 'Unauthorized' }), {
-        status: 401,
-        headers: { ...corsHeaders, 'Content-Type': 'application/json' },
-      });
-    }
-
-    const supabaseUrl = Deno.env.get('SUPABASE_URL')!;
-    const anonKey = Deno.env.get('SUPABASE_ANON_KEY')!;
-    const userClient = createClient(supabaseUrl, anonKey, {
-      global: { headers: { Authorization: authHeader } },
+    const authorization = req.headers.get('Authorization') || '';
+    if (!/^Bearer\s+\S+$/i.test(authorization)) return json({ success: false, message: 'Unauthorized' }, 401);
+    const userClient = createClient(Deno.env.get('SUPABASE_URL')!, Deno.env.get('SUPABASE_ANON_KEY')!, {
+      global: { headers: { Authorization: authorization } },
+      auth: { persistSession: false, autoRefreshToken: false },
     });
-    const { data: { user } } = await userClient.auth.getUser();
-    if (!user) {
-      return new Response(JSON.stringify({ success: false, message: 'Unauthorized' }), {
-        status: 401,
-        headers: { ...corsHeaders, 'Content-Type': 'application/json' },
-      });
-    }
-
+    const { data: { user }, error: authError } = await userClient.auth.getUser();
+    if (authError || !user) return json({ success: false, message: 'Unauthorized' }, 401);
     const body = await req.json();
-    const format = body.format === 'markdown' ? 'markdown' : 'csv';
-    let tasks = body.tasks || [];
-
-    if (body.meetingId && (!tasks || !tasks.length)) {
-      const { data } = await userClient
-        .from('tasks')
-        .select('title, assignee, due_date, completed')
-        .eq('meeting_id', body.meetingId);
-      tasks = data || [];
+    if (typeof body?.meetingId !== 'string' || !/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(body.meetingId)) {
+      return json({ success: false, message: 'Invalid meeting' }, 400);
     }
-
-    if (!tasks.length) {
-      return new Response(JSON.stringify({ success: false, message: 'No tasks' }), {
-        status: 400,
-        headers: { ...corsHeaders, 'Content-Type': 'application/json' },
-      });
-    }
-
-    let content = '';
-    if (format === 'csv') {
-      content =
-        'Task,Assignee,Deadline,Done\n' +
-        tasks
-          .map(
-            (t: any) =>
-              `"${String(t.title || '').replace(/"/g, '""')}","${t.assignee || ''}","${t.due_date || t.deadline || ''}","${t.completed ? 'yes' : 'no'}"`,
-          )
-          .join('\n');
-    } else {
-      const heading = body.meetingTitle ? `# ${body.meetingTitle}\n\n` : '';
-      content =
-        heading +
-        tasks
-          .map(
-            (t: any) =>
-              `- [${t.completed ? 'x' : ' '}] ${t.title || ''}${t.assignee ? ` (@${t.assignee})` : ''}${t.due_date ? ` — ${t.due_date}` : ''}`,
-          )
-          .join('\n');
-    }
-
-    return new Response(JSON.stringify({ success: true, content, format }), {
-      headers: { ...corsHeaders, 'Content-Type': 'application/json' },
-    });
-  } catch (err: any) {
-    return new Response(JSON.stringify({ success: false, message: err?.message || 'Error' }), {
-      status: 500,
-      headers: { ...corsHeaders, 'Content-Type': 'application/json' },
-    });
+    const format = body.format === 'markdown' ? 'markdown' : body.format === 'csv' ? 'csv' : null;
+    if (!format) return json({ success: false, message: 'Unsupported format' }, 400);
+    const { data: meeting, error: meetingError } = await userClient.from('meetings').select('id, title').eq('id', body.meetingId).eq('user_id', user.id).single();
+    if (meetingError || !meeting) return json({ success: false, message: 'Meeting not found' }, 404);
+    const { data: tasks, error: tasksError } = await userClient.from('tasks').select('title, assignee, due_date, completed')
+      .eq('meeting_id', meeting.id).eq('user_id', user.id).order('created_at', { ascending: true });
+    if (tasksError) return json({ success: false, message: 'Could not load tasks' }, 500);
+    if (!tasks?.length) return json({ success: false, message: 'No tasks' }, 400);
+    const content = format === 'csv'
+      ? ['Task,Assignee,Deadline,Done', ...tasks.map((t) => [t.title, t.assignee, t.due_date, t.completed ? 'yes' : 'no'].map(cell).join(','))].join('\r\n')
+      : `# ${meeting.title || 'Meeting'}\n\n${tasks.map((t) => `- [${t.completed ? 'x' : ' '}] ${t.title || ''}${t.assignee ? ` (@${t.assignee})` : ''}${t.due_date ? ` — ${t.due_date}` : ''}`).join('\n')}`;
+    return json({ success: true, content, format });
+  } catch {
+    return json({ success: false, message: 'Export failed' }, 500);
   }
 });
