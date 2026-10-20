@@ -37,6 +37,7 @@ export function MeetingDetailPage({ meetings, onToggleTask, onSaveMeeting, onSav
   const save = async () => {
     setBusy(true); setError('');
     try {
+      if (meeting.tasks.some((task) => !taskDrafts[task.id]?.title.trim())) throw new Error(t.meeting.taskTitleRequired);
       await onSaveMeeting(meeting.id, { summary, decisions });
       for (const task of meeting.tasks) {
         const draft = taskDrafts[task.id];
