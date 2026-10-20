@@ -11,7 +11,7 @@ export function MeetingsPage({ meetings }: Props) {
     const needle = query.trim().toLocaleLowerCase();
     if (!needle) return meetings;
     return meetings.filter((m) =>
-      [m.title, m.summary, m.decisions, ...(m.tasks || []).flatMap((task) => [task.title, task.assignee, task.deadline])]
+      [m.title, m.summary, m.decisions, ...(m.transcript || []).map((part) => part.text), ...(m.tasks || []).flatMap((task) => [task.title, task.assignee, task.deadline])]
         .some((value) => value?.toLocaleLowerCase().includes(needle)),
     );
   }, [meetings, query]);
