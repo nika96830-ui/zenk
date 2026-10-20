@@ -5,7 +5,7 @@ Zenk is a Vite + React web app (also packaged for mobile with Capacitor) with a 
 ## 1. Database
 
 Open Supabase → SQL Editor, paste `supabase-schema.sql`, click Run.
-Then run `supabase/migrations/add_billing_columns.sql` (billing columns on `profiles`).
+Apply the database migrations in order, including the migration that removes legacy payment fields.
 
 Create a **private** Storage bucket named `recordings` (the schema only adds the access policies, not the bucket itself).
 
@@ -18,7 +18,7 @@ VITE_SUPABASE_URL=https://YOUR-PROJECT.supabase.co
 VITE_SUPABASE_ANON_KEY=your_anon_key
 ```
 
-Only public values go here. Never put the OpenAI key, the Stripe secret key or the Supabase service role key in `.env` or in the client.
+Only public values go here. Never put the OpenAI key, the Supabase service role key in `.env` or in the client.
 
 ## 3. Server secrets (Supabase)
 
@@ -26,22 +26,20 @@ Only public values go here. Never put the OpenAI key, the Stripe secret key or t
 npx supabase login
 npx supabase link --project-ref YOUR_PROJECT_REF
 npx supabase secrets set OPENAI_API_KEY=<your_openai_api_key>
-npx supabase secrets set STRIPE_SECRET_KEY=<your_stripe_secret_key>
-npx supabase secrets set STRIPE_WEBHOOK_SECRET=<your_stripe_webhook_signing_secret>
 ```
 
 ## 4. Deploy functions
 
-`supabase/config.toml` keeps JWT verification on for all functions except `stripe-webhook` (Stripe signs its requests instead).
+`supabase/config.toml` keeps JWT verification enabled for both supported functions.
 
 ```
 npx supabase functions deploy process-meeting
 npx supabase functions deploy export-tasks
-npx supabase functions deploy create-checkout
-npx supabase functions deploy stripe-webhook
 ```
 
-See `docs/EDGE_FUNCTIONS.md` and `docs/STRIPE.md` for details.
+See `docs/EDGE_FUNCTIONS.md` for details.
+
+After releasing, delete the previously deployed `create-checkout` and `stripe-webhook` Edge Functions and remove legacy Stripe secrets from the Supabase project. Also disable any Stripe webhook in its own dashboard; deleting code alone does not undeploy remote endpoints.
 
 ## 5. Run locally
 
