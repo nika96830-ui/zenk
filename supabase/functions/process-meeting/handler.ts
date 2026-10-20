@@ -3,6 +3,7 @@ import type { SupabaseClient } from 'https://esm.sh/@supabase/supabase-js@2';
 type Dependencies = {
   clientFor: (authorization: string) => SupabaseClient;
   openAiKey: () => string | undefined;
+  reserveUsage: (userId: string, meetingId: string, plan: string, periodStart: string) => Promise<boolean>;
   fetch: typeof fetch;
 };
 
@@ -98,6 +99,21 @@ export async function handleProcessMeeting(req: Request, deps: Dependencies): Pr
       .from('recordings').download(path);
     if (downloadError || !audio) return json({ error: 'Recording unavailable' }, 404);
     if (audio.size > 25 * 1024 * 1024) return json({ error: 'Recording too large' }, 413);
+
+    // The plan is read under the user's JWT/RLS. Only the quota reservation uses
+    // a narrowly scoped server-side RPC; meeting and storage operations stay user-bound.
+    stage = 'usage-reservation';
+    const { data: profile, error: profileError } = await client.from('profiles')
+      .select('plan').eq('id', user.id).single();
+    if (profileError || !profile) throw new Error('Usage unavailable');
+    const plan = typeof profile.plan === 'string' ? profile.plan : 'free';
+    const quotas: Record<string, number> = { free: 5, freelance: 100, team: 500 };
+    const quota = quotas[plan] ?? quotas.free;
+    const now = new Date();
+    const periodStart = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), 1))
+      .toISOString().slice(0, 10);
+    const reserved = await deps.reserveUsage(user.id, meetingId, plan, periodStart);
+    if (!reserved) return json({ error: 'Monthly meeting limit reached' }, 429);
 
     stage = 'mark-processing';
     const { error: startError } = await client.from('meetings')
