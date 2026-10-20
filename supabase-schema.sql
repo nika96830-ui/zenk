@@ -7,7 +7,6 @@ create table if not exists public.profiles (
   avatar_url text,
   push_token text,
   plan text default 'free',
-  stripe_customer_id text,
   updated_at timestamp with time zone default timezone('utc'::text, now()),
   created_at timestamp with time zone default timezone('utc'::text, now())
 );

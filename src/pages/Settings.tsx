@@ -31,13 +31,6 @@ export function SettingsPage() {
           ))}
         </div>
       </section>
-      <section style={{ marginBottom: 24 }}>
-        <h2 style={{ fontSize: '0.85rem', color: 'var(--muted)', marginBottom: 8 }}>{t.settings.plan}</h2>
-        <div className="meeting-card">
-          <strong>{t.settings.planFreelance}</strong> · {t.settings.planPrice}
-          <p style={{ color: 'var(--muted)', marginTop: 8 }}>{t.settings.planDesc}</p>
-        </div>
-      </section>
       <button className="btn btn-secondary btn-block" onClick={() => logout()}>{t.settings.logout}</button>
       <p style={{ textAlign: 'center', color: 'var(--muted)', marginTop: 24, fontSize: '0.85rem' }}>{t.settings.version}</p>
     </div>
