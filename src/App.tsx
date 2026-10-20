@@ -1,4 +1,4 @@
-import { Routes, Route, useLocation } from 'react-router-dom';
+import { Routes, Route, Navigate, useLocation } from 'react-router-dom';
 import { BottomNav } from './components/BottomNav';
 import { Onboarding } from './components/Onboarding';
 import { MeetingsPage } from './pages/Meetings';
@@ -51,6 +51,7 @@ export default function App() {
           <Route path="/meeting/:id" element={<MeetingDetailPage meetings={meetings} onToggleTask={toggleTask} onSaveMeeting={async (id, patch) => { await updateMeetingContent(id, patch); setMeetings((rows) => rows.map((row) => row.id === id ? { ...row, ...patch } : row)); }} onSaveTask={async (meetingId, task) => { await updateTaskContent(meetingId, task); setMeetings((rows) => rows.map((row) => row.id !== meetingId ? row : { ...row, tasks: row.tasks.map((item) => item.id === task.id ? { ...item, ...task } : item) })); }} />} />
           <Route path="/record" element={<RecordPage />} />
           <Route path="/settings" element={<SettingsPage />} />
+          <Route path="*" element={<Navigate to="/" replace />} />
         </Routes>
       </main>
       {!hideNav && <BottomNav />}
