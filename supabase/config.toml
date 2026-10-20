@@ -9,11 +9,3 @@ verify_jwt = true
 
 [functions.export-tasks]
 verify_jwt = true
-
-[functions.create-checkout]
-verify_jwt = true
-
-# Stripe calls this endpoint without a Supabase JWT.
-# The request is authenticated by the Stripe signature (STRIPE_WEBHOOK_SECRET) instead.
-[functions.stripe-webhook]
-verify_jwt = false
