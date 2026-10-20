@@ -15,7 +15,9 @@ serve((req) => handleProcessMeeting(req, {
   openAiKey: () => Deno.env.get('OPENAI_API_KEY'),
   // The service-role client is created only inside this quota RPC callback.
   // It never reads or writes meetings, tasks, profiles, or Storage objects.
-  reserveUsage: async (userId, meetingId, quota, periodStart) => {
+  reserveUsage: async (userId, meetingId, plan, periodStart) => {
+    const quotas: Record<string, number> = { free: 5, freelance: 100, team: 500 };
+    const quota = quotas[plan] ?? quotas.free;
     const trustedClient = createClient(
       Deno.env.get('SUPABASE_URL')!,
       Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!,
