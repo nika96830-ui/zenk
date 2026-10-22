@@ -11,13 +11,18 @@ const EXTENSIONS_BY_MIME: Record<string, string> = { 'audio/webm': 'webm', 'audi
 const MONTHLY_MEETING_QUOTA = 5;
 
 function corsHeaders(origin: string) { return { 'Access-Control-Allow-Origin': origin, 'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type', 'Access-Control-Allow-Methods': 'POST, OPTIONS', Vary: 'Origin' }; }
-function configuredOrigin(): string { const configured = Deno.env.get('ALLOWED_ORIGIN'); if (!configured) throw new Error('ALLOWED_ORIGIN is not configured'); return new URL(configured).origin; }
 
 serve(async (req) => {
   let meetingId: string | undefined; let ownerId: string | undefined; let admin: ReturnType<typeof createClient> | undefined; let headers: Record<string, string> = {};
   try {
-    const origin = configuredOrigin(); headers = corsHeaders(origin); const requestOrigin = req.headers.get('Origin');
-    if (requestOrigin && requestOrigin !== origin) return new Response('Origin not allowed', { status: 403 });
+    // CORS is not an authorization boundary. Every processing request still verifies the
+    // Supabase JWT and checks meeting ownership before using the service-role client.
+    // Keep ALLOWED_ORIGIN optional because the documented setup does not require this secret.
+    const configured = Deno.env.get('ALLOWED_ORIGIN');
+    const origin = configured ? new URL(configured).origin : '*';
+    headers = corsHeaders(origin);
+    const requestOrigin = req.headers.get('Origin');
+    if (configured && requestOrigin && requestOrigin !== origin) return new Response('Origin not allowed', { status: 403, headers });
     if (req.method === 'OPTIONS') return new Response('ok', { headers });
     if (req.method !== 'POST') return new Response('Method not allowed', { status: 405, headers });
     const body = await req.json(); meetingId = body.meetingId; const audioPath = body.audioPath; const language = body.language || 'ru';
