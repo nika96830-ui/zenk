@@ -27,6 +27,12 @@ test('task ownership migration prevents cross-owner task assignment',()=>{
   assert.match(migration,/auth\.uid\(\)/);
   assert.match(migration,/WITH CHECK/);
 });
+test('normalized authentication failures are localized in every supported locale',()=>{
+  const auth=source('../src/pages/Auth.tsx');
+  const messages=source('../src/i18n/messages.ts');
+  for (const key of ['AUTH_INVALID_CREDENTIALS','AUTH_EMAIL_EXISTS','AUTH_EMAIL_NOT_CONFIRMED','AUTH_PASSWORD_TOO_SHORT','AUTH_NETWORK_ERROR','AUTH_RATE_LIMIT','AUTH_GENERIC_ERROR']) assert.match(auth,new RegExp(key));
+  for (const phrase of ['invalidCredentials','emailExists','emailNotConfirmed','passwordTooShort','networkError','rateLimit','genericError']) assert.match(messages,new RegExp(phrase));
+});
 test('offline task save failures are surfaced and rolled back',()=>{
   const code=source('../src/hooks/useOffline.ts');
   assert.match(code,/MEETINGS_LOAD_FAILED/);
