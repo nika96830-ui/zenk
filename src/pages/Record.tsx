@@ -113,16 +113,40 @@ export function RecordPage() {
     if (!recorder) return;
     await hapticHeavy();
     return new Promise<void>((resolve) => {
-      recorder.onstop = async () => {
+      let settled = false;
+      const releaseMicrophone = () => {
         streamRef.current?.getTracks().forEach((track) => track.stop());
         streamRef.current = null;
-        const blob = new Blob(chunksRef.current, { type: recorder.mimeType || 'audio/webm' });
+        mediaRecorderRef.current = null;
         setIsRecording(false);
         setIsPaused(false);
-        await processAudio(blob, t.meetings.newMeeting);
-        resolve();
       };
-      recorder.stop();
+      const finish = async () => {
+        if (settled) return;
+        settled = true;
+        releaseMicrophone();
+        const blob = new Blob(chunksRef.current, { type: recorder.mimeType || 'audio/webm' });
+        try {
+          if (blob.size > 0) await processAudio(blob, t.meetings.newMeeting);
+          else setStatusText(t.record.error);
+        } finally {
+          chunksRef.current = [];
+          resolve();
+        }
+      };
+      recorder.onstop = () => { void finish(); };
+      try {
+        recorder.stop();
+      } catch (err) {
+        // Some browser/device implementations can throw synchronously from stop().
+        // Always release the physical microphone and reset the UI in this failure path.
+        releaseMicrophone();
+        chunksRef.current = [];
+        setStatusText(t.record.error);
+        void hapticError();
+        settled = true;
+        resolve();
+      }
     });
   };
 
