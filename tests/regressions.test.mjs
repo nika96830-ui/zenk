@@ -79,6 +79,9 @@ test('task ownership migration prevents cross-owner task assignment', () => {
   assert.match(migration, /meeting_owner <> NEW\.user_id/);
   assert.match(migration, /auth\.uid\(\)/);
   assert.match(migration, /WITH CHECK/);
+  assert.match(migration, /REVOKE ALL ON TABLE public\\.tasks FROM anon/);
+  assert.match(migration, /GRANT SELECT, INSERT, UPDATE, DELETE ON TABLE public\\.tasks TO authenticated/);
+  assert.match(migration, /REVOKE ALL ON FUNCTION public\\.enforce_task_meeting_owner\\(\\) FROM PUBLIC, anon, authenticated/);
 });
 
 test('JWT, owner checks, and server-side quota reservation remain enabled', () => {
