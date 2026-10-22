@@ -13,7 +13,7 @@ const MONTHLY_MEETING_QUOTA = 5;
 function corsHeaders(origin: string) { return { 'Access-Control-Allow-Origin': origin, 'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type', 'Access-Control-Allow-Methods': 'POST, OPTIONS', Vary: 'Origin' }; }
 
 serve(async (req) => {
-  let meetingId: string | undefined; let ownerId: string | undefined; let admin: ReturnType<typeof createClient> | undefined; let headers: Record<string, string> = {};
+  let meetingId: string | undefined; let ownerId: string | undefined; let admin: ReturnType<typeof createClient<any>> | undefined; let headers: Record<string, string> = {};
   try {
     // CORS is not an authorization boundary. Every processing request still verifies the
     // Supabase JWT and checks meeting ownership before using the service-role client.
@@ -32,7 +32,7 @@ serve(async (req) => {
     const userClient = createClient(supabaseUrl, anonKey, { global: { headers: { Authorization: req.headers.get('Authorization') || '' } } });
     const { data: { user }, error: authError } = await userClient.auth.getUser();
     if (authError || !user) return new Response(JSON.stringify({ error: 'Unauthorized' }), { status: 401, headers: { ...headers, 'Content-Type': 'application/json' } });
-    ownerId = user.id; admin = createClient(supabaseUrl, serviceKey);
+    ownerId = user.id; admin = createClient<any>(supabaseUrl, serviceKey);
     const { data: meeting, error: meetingError } = await admin.from('meetings').select('id, user_id, audio_path, title').eq('id', meetingId).eq('user_id', user.id).single();
     if (meetingError || !meeting) throw new Error('Meeting not found');
     const path = audioPath || meeting.audio_path; if (typeof path !== 'string' || !path.startsWith(`${user.id}/`)) throw new Error('Recording path is invalid');
