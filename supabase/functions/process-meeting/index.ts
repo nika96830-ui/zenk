@@ -73,8 +73,8 @@ serve(async (req) => {
     const periodStart = new Date(); periodStart.setUTCDate(1); periodStart.setUTCHours(0, 0, 0, 0);
     const { data: allowed, error: quotaError } = await admin.rpc('reserve_meeting_usage', { p_user_id: user.id, p_meeting_id: meetingId, p_period_start: periodStart.toISOString().slice(0, 10), p_quota: MONTHLY_MEETING_QUOTA });
     if (quotaError) throw new Error('Unable to check meeting quota'); if (!allowed) throw new Error('Monthly meeting quota exceeded');
-    const whisperLanguage = ['ru', 'en', 'tr', 'az'].includes(language) ? language : 'ru'; const form = new FormData(); const filename = path.split('/').pop() || `recording.${fileFormat.extension}`;
-    form.append('file', new File([fileData], filename, { type: fileFormat.mime })); form.append('model', 'whisper-1'); form.append('language', whisperLanguage);
+    const transcriptionLanguage = ['ru', 'en', 'tr', 'az'].includes(language) ? language : 'ru'; const form = new FormData(); const filename = path.split('/').pop() || `recording.${fileFormat.extension}`;
+    form.append('file', new File([fileData], filename, { type: fileFormat.mime })); form.append('model', 'gpt-transcribe'); form.append('language', transcriptionLanguage);
     const whisperResponse = await fetch('https://api.openai.com/v1/audio/transcriptions', { method: 'POST', headers: { Authorization: `Bearer ${openAiKey}` }, body: form });
     const whisperJson = await whisperResponse.json(); if (!whisperResponse.ok) throw new Error(whisperJson?.error?.message || 'Whisper failed'); const transcript = (whisperJson.text || '').trim(); if (!transcript) throw new Error('Empty transcript');
     const analysisResponse = await fetch('https://api.openai.com/v1/chat/completions', {
