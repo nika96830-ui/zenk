@@ -40,6 +40,9 @@ test('microphone tracks are released on setup failure and unmount', () => {
   assert.match(code, unmountEffect);
   assert.match(code, /streamRef\.current\?\.getTracks\(\)\.forEach\(\(track\) => track\.stop\(\)\);/);
   assert.match(code, /streamRef\.current = null;/);
+  assert.match(code, /const releaseMicrophone = \(\) =>/);
+  assert.match(code, /try \{\s*recorder\.stop\(\);\s*\} catch/);
+  assert.match(code, /mediaRecorderRef\.current = null;/);
   assert.ok(timerEffect);
   assert.doesNotMatch(timerEffect[0], /track\.stop\(\)/);
 });
