@@ -4,6 +4,7 @@ import { Mic, Square, Pause, Play, Upload } from 'lucide-react';
 import { processRecording } from '../services/ai';
 import { hapticLight, hapticMedium, hapticHeavy, hapticSuccess, hapticError } from '../services/haptics';
 import { useI18n } from '../i18n/I18nProvider';
+import type { Meeting } from '../types';
 
 function getSupportedMimeType(): string {
   if (typeof MediaRecorder === 'undefined') return '';
@@ -12,7 +13,7 @@ function getSupportedMimeType(): string {
   return '';
 }
 
-export function RecordPage() {
+export function RecordPage({ onMeetingCreated }: { onMeetingCreated: (meeting: Meeting) => void }) {
   const navigate = useNavigate();
   const { t, locale } = useI18n();
   const [isRecording, setIsRecording] = useState(false);
@@ -37,6 +38,7 @@ export function RecordPage() {
     try {
       const result = await processRecording(audio, title, locale);
       await hapticSuccess();
+      onMeetingCreated(result.meeting);
       setStatusText(t.record.done);
       navigate('/meeting/' + result.meeting.id);
     } catch (err) {
