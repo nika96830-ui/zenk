@@ -30,7 +30,16 @@ ON public.tasks
 FOR EACH ROW
 EXECUTE FUNCTION public.enforce_task_meeting_owner();
 
+-- Trigger-only helper; do not expose it as an RPC to API roles.
+REVOKE ALL ON FUNCTION public.enforce_task_meeting_owner() FROM PUBLIC, anon, authenticated;
+
 ALTER TABLE public.tasks ENABLE ROW LEVEL SECURITY;
+
+-- Data API privileges are explicit: signed-in users are constrained by RLS;
+-- anonymous clients must not reach user task rows at all.
+REVOKE ALL ON TABLE public.tasks FROM anon;
+GRANT SELECT, INSERT, UPDATE, DELETE ON TABLE public.tasks TO authenticated;
+GRANT ALL ON TABLE public.tasks TO service_role;
 
 DROP POLICY IF EXISTS "Users manage own tasks" ON public.tasks;
 CREATE POLICY "Users manage own tasks"
