@@ -1,6 +1,8 @@
 -- Ephemeral PostgreSQL fixture for task/meeting ownership migration tests.
 -- Contains synthetic data only; never connects to the production Supabase project.
+CREATE ROLE anon NOLOGIN;
 CREATE ROLE authenticated NOLOGIN;
+CREATE ROLE service_role NOLOGIN;
 CREATE SCHEMA auth;
 CREATE OR REPLACE FUNCTION auth.uid()
 RETURNS uuid
