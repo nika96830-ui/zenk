@@ -62,7 +62,7 @@ test('export is owner-bound and does not trust client task arrays', () => {
   assert.match(code, /MAX_TASKS/);
   assert.match(code, /MAX_EXPORT_BYTES/);
   assert.match(code, /csvCell/);
-  assert.match(code, /\[=+\-@]/);
+  assert.match(code, /protectedValue = .*test\(value\)/);
 });
 
 test('task ownership migration prevents cross-owner task assignment', () => {
