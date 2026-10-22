@@ -70,7 +70,7 @@ export function AuthPage() {
           <input type="text" placeholder={t.auth.name} value={fullName} onChange={(e) => setFullName(e.target.value)} style={inputStyle} />
         )}
         <input type="email" placeholder={t.auth.email} value={email} onChange={(e) => setEmail(e.target.value)} required style={inputStyle} />
-        {mode !== 'reset' && <input type="password" placeholder={t.auth.password} value={password} onChange={(e) => setPassword(e.target.value)} required minLength={8} style={inputStyle} />}
+        {mode !== 'reset' && <input type="password" placeholder={t.auth.password} value={password} onChange={(e) => setPassword(e.target.value)} required minLength={mode === 'register' ? 8 : undefined} style={inputStyle} />}
         {error && <p role="alert" style={{ color: 'var(--danger)', fontSize: '0.9rem', textAlign: 'center' }}>{error}</p>}
         {success && <p role="status" style={{ color: 'var(--forest)', fontSize: '0.9rem', textAlign: 'center' }}>{success}</p>}
         <button type="submit" className="btn btn-primary btn-block" disabled={loading} style={{ marginTop: 8 }}>
