@@ -6,6 +6,7 @@ import { MeetingDetailPage } from './pages/MeetingDetail';
 import { RecordPage } from './pages/Record';
 import { SettingsPage } from './pages/Settings';
 import { AuthPage } from './pages/Auth';
+import { ResetPasswordPage } from './pages/ResetPassword';
 import { useOffline } from './hooks/useOffline';
 import { useTheme } from './hooks/useTheme';
 import { useAuth } from './hooks/useAuth';
@@ -26,6 +27,16 @@ export default function App() {
     return (
       <div className="app-shell" style={{ display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
         <div style={{ color: 'var(--muted)' }}>{t.loading}</div>
+      </div>
+    );
+  }
+
+  if (location.pathname === '/reset-password') {
+    return (
+      <div className="app-shell">
+        <main className="app-content" style={{ paddingBottom: 0 }}>
+          <ResetPasswordPage />
+        </main>
       </div>
     );
   }

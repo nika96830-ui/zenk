@@ -107,3 +107,27 @@ test('offline task save failures are surfaced and rolled back', () => {
   assert.match(code, /previousDone/);
   assert.match(code, /zang-meetings-cache:/);
 });
+
+
+test('password recovery and email confirmation have reachable UI', () => {
+  const app = source('../src/App.tsx');
+  const auth = source('../src/pages/Auth.tsx');
+  const reset = source('../src/pages/ResetPassword.tsx');
+  const authService = source('../src/services/auth.ts');
+  assert.match(app, /location\.pathname === '\/reset-password'/);
+  assert.match(auth, /requestPasswordReset\(email\)/);
+  assert.match(auth, /emailConfirmationSent/);
+  assert.match(reset, /updatePassword\(password\)/);
+  assert.match(authService, /resetPasswordForEmail/);
+});
+
+test('audio file upload is available and provider/quota errors are surfaced without raw details', () => {
+  const record = source('../src/pages/Record.tsx');
+  const ai = source('../src/services/ai.ts');
+  assert.match(record, /type="file" accept="audio\/\*[,;]/);
+  assert.match(record, /processRecording\(file, title, locale\)/);
+  assert.match(record, /MEETING_QUOTA_EXCEEDED/);
+  assert.match(record, /AI_INSUFFICIENT_BALANCE/);
+  assert.match(ai, /MEETING_QUOTA_EXCEEDED/);
+  assert.match(ai, /AI_INSUFFICIENT_BALANCE/);
+});
