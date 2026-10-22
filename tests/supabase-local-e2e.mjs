@@ -46,14 +46,14 @@ try {
 
   const { data: meetingA, error: meetingAError } = await clientA
     .from('meetings').insert({ user_id: userA.id, title: 'Synthetic meeting A', status: 'ready' }).select('*').single();
-  assert.equal(meetingAError, null, `user A meeting insert: ${meetingAError?.message || ''});
+  assert.equal(meetingAError, null, 'user A meeting insert: ' + (meetingAError?.message || ''));
   const { data: meetingB, error: meetingBError } = await clientB
     .from('meetings').insert({ user_id: userB.id, title: 'Synthetic meeting B', status: 'ready' }).select('*').single();
-  assert.equal(meetingBError, null, `user B meeting insert: ${meetingBError?.message || ''});
+  assert.equal(meetingBError, null, 'user B meeting insert: ' + (meetingBError?.message || ''));
 
   const { data: taskA, error: taskAError } = await clientA
     .from('tasks').insert({ meeting_id: meetingA.id, user_id: userA.id, title: 'A private task' }).select('*').single();
-  assert.equal(taskAError, null, `user A task insert: ${taskAError?.message || ''});
+  assert.equal(taskAError, null, 'user A task insert: ' + (taskAError?.message || ''));
 
   const hiddenMeeting = await clientB.from('meetings').select('id').eq('id', meetingA.id);
   assert.equal(hiddenMeeting.error, null, 'RLS should hide rather than expose another owner meeting');
@@ -73,7 +73,7 @@ try {
   assert.deepEqual(crossOwnerUpdate.data, [], 'user B must not update user A task');
 
   const validUpdate = await clientA.from('tasks').update({ completed: true }).eq('id', taskA.id).select('id').single();
-  assert.equal(validUpdate.error, null, `owner task update: ${validUpdate.error?.message || ''});
+  assert.equal(validUpdate.error, null, 'owner task update: ' + (validUpdate.error?.message || ''));
   assert.equal(validUpdate.data.id, taskA.id);
 
   const planEscalation = await clientA.from('profiles').update({ plan: 'pro' }).eq('id', userA.id).select('plan').single();
@@ -87,7 +87,7 @@ try {
   const firstReservation = await admin.rpc('reserve_meeting_usage', {
     p_user_id: userA.id, p_meeting_id: meetingA.id, p_period_start: periodStart, p_quota: 1,
   });
-  assert.equal(firstReservation.error, null, `service-role usage reservation: ${firstReservation.error?.message || ''});
+  assert.equal(firstReservation.error, null, 'service-role usage reservation: ' + (firstReservation.error?.message || ''));
   assert.equal(firstReservation.data, true, 'first usage reservation must succeed');
 
   const secondReservation = await admin.rpc('reserve_meeting_usage', {
@@ -96,7 +96,7 @@ try {
     p_period_start: periodStart,
     p_quota: 1,
   });
-  assert.equal(secondReservation.error, null, `quota check: ${secondReservation.error?.message || ''});
+  assert.equal(secondReservation.error, null, 'quota check: ' + (secondReservation.error?.message || ''));
   assert.equal(secondReservation.data, false, 'quota must reject the second distinct meeting at limit 1');
 
   const clientReservation = await clientA.rpc('reserve_meeting_usage', {
