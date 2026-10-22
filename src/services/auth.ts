@@ -2,6 +2,7 @@ import { supabase } from '../lib/supabase';
 import type { User, Session } from '@supabase/supabase-js';
 
 export async function signUp(email: string, password: string, fullName?: string) {
+  assertPasswordLength(password);
   const { data, error } = await supabase.auth.signUp({
     email,
     password,
@@ -37,6 +38,7 @@ export async function requestPasswordReset(email: string) {
 }
 
 export async function updatePassword(password: string) {
+  assertPasswordLength(password);
   const { error } = await supabase.auth.updateUser({ password });
   if (error) throw new Error(authErrorCode(error.message));
 }
@@ -67,6 +69,10 @@ export async function savePushToken(token: string) {
     updated_at: new Date().toISOString(),
   });
   if (error) throw new Error('PROFILE_UPDATE_FAILED');
+}
+
+function assertPasswordLength(password: string) {
+  if (password.length < 8) throw new Error('AUTH_PASSWORD_TOO_SHORT');
 }
 
 function authErrorCode(message: string): string {
