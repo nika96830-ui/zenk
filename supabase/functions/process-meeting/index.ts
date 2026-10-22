@@ -1,5 +1,33 @@
 import { serve } from 'https://deno.land/std@0.168.0/http/server.ts';
-import { createClient } from 'https://esm.sh/@supabase/supabase-js@2';
+import { createClient, type SupabaseClient } from 'https://esm.sh/@supabase/supabase-js@2';
+
+// Minimal generated-schema contract for the tables/RPC used by this Edge Function.
+// Keeping the real row and argument shapes typed prevents Supabase's untyped default
+// schema from reducing query results and writes to never/undefined.
+type Database = {
+  public: {
+    Tables: {
+      meetings: {
+        Row: { id: string; user_id: string; audio_path: string | null; title: string; status: string; transcript: string | null; summary: string | null; updated_at: string | null };
+        Insert: { id?: string; user_id: string; audio_path?: string | null; title?: string; status?: string; transcript?: string | null; summary?: string | null; updated_at?: string | null };
+        Update: { user_id?: string; audio_path?: string | null; title?: string; status?: string; transcript?: string | null; summary?: string | null; updated_at?: string | null };
+        Relationships: [];
+      };
+      tasks: {
+        Row: { id: string; meeting_id: string; user_id: string; title: string; assignee: string | null; due_date: string | null; completed: boolean; created_at: string };
+        Insert: { id?: string; meeting_id: string; user_id: string; title: string; assignee?: string | null; due_date?: string | null; completed?: boolean; created_at?: string };
+        Update: { meeting_id?: string; user_id?: string; title?: string; assignee?: string | null; due_date?: string | null; completed?: boolean };
+        Relationships: [];
+      };
+    };
+    Views: Record<string, never>;
+    Functions: {
+      reserve_meeting_usage: { Args: { p_user_id: string; p_meeting_id: string; p_period_start: string; p_quota: number }; Returns: boolean };
+    };
+    Enums: Record<string, never>;
+    CompositeTypes: Record<string, never>;
+  };
+};
 
 const MAX_AUDIO_BYTES = 25 * 1024 * 1024;
 const MIME_TYPES: Record<string, { extension: string; mime: string }> = {
@@ -13,7 +41,7 @@ const MONTHLY_MEETING_QUOTA = 5;
 function corsHeaders(origin: string) { return { 'Access-Control-Allow-Origin': origin, 'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type', 'Access-Control-Allow-Methods': 'POST, OPTIONS', Vary: 'Origin' }; }
 
 serve(async (req) => {
-  let meetingId: string | undefined; let ownerId: string | undefined; let admin: ReturnType<typeof createClient> | undefined; let headers: Record<string, string> = {};
+  let meetingId: string | undefined; let ownerId: string | undefined; let admin: SupabaseClient<Database> | undefined; let headers: Record<string, string> = {};
   try {
     // CORS is not an authorization boundary. Every processing request still verifies the
     // Supabase JWT and checks meeting ownership before using the service-role client.
@@ -29,10 +57,10 @@ serve(async (req) => {
     if (typeof meetingId !== 'string' || !meetingId) throw new Error('meetingId is required');
     const supabaseUrl = Deno.env.get('SUPABASE_URL'), serviceKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY'), anonKey = Deno.env.get('SUPABASE_ANON_KEY'), openAiKey = Deno.env.get('OPENAI_API_KEY');
     if (!supabaseUrl || !serviceKey || !anonKey) throw new Error('Supabase configuration is missing'); if (!openAiKey) throw new Error('OPENAI_API_KEY is not configured');
-    const userClient = createClient(supabaseUrl, anonKey, { global: { headers: { Authorization: req.headers.get('Authorization') || '' } } });
+    const userClient = createClient<Database>(supabaseUrl, anonKey, { global: { headers: { Authorization: req.headers.get('Authorization') || '' } } });
     const { data: { user }, error: authError } = await userClient.auth.getUser();
     if (authError || !user) return new Response(JSON.stringify({ error: 'Unauthorized' }), { status: 401, headers: { ...headers, 'Content-Type': 'application/json' } });
-    ownerId = user.id; admin = createClient(supabaseUrl, serviceKey);
+    ownerId = user.id; admin = createClient<Database>(supabaseUrl, serviceKey);
     const { data: meeting, error: meetingError } = await admin.from('meetings').select('id, user_id, audio_path, title').eq('id', meetingId).eq('user_id', user.id).single();
     if (meetingError || !meeting) throw new Error('Meeting not found');
     const path = audioPath || meeting.audio_path; if (typeof path !== 'string' || !path.startsWith(`${user.id}/`)) throw new Error('Recording path is invalid');
