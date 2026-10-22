@@ -24,7 +24,19 @@ export function AuthPage() {
       else await register(email, password, fullName);
       await hapticSuccess();
     } catch (err: any) {
-      setError(err.message || t.auth.error);
+      const code = err instanceof Error ? err.message : '';
+      const localizedErrors: Record<string, string> = {
+        AUTH_INVALID_CREDENTIALS: t.auth.invalidCredentials,
+        AUTH_EMAIL_EXISTS: t.auth.emailExists,
+        AUTH_EMAIL_NOT_CONFIRMED: t.auth.emailNotConfirmed,
+        AUTH_PASSWORD_TOO_SHORT: t.auth.passwordTooShort,
+        AUTH_NETWORK_ERROR: t.auth.networkError,
+        AUTH_RATE_LIMIT: t.auth.rateLimit,
+        AUTH_GENERIC_ERROR: t.auth.genericError,
+        SESSION_RESTORE_FAILED: t.auth.genericError,
+        AUTH_REQUIRED: t.auth.genericError,
+      };
+      setError(localizedErrors[code] || t.auth.genericError);
       await hapticError();
     } finally {
       setLoading(false);
