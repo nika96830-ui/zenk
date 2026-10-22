@@ -125,7 +125,7 @@ test('audio file upload is available and provider/quota errors are surfaced with
   const record = source('../src/pages/Record.tsx');
   const ai = source('../src/services/ai.ts');
   assert.match(record, /type="file" accept="audio\/\*[,;]/);
-  assert.match(record, /processRecording\(file, title, locale\)/);
+  assert.match(record, /processAudio\(file, title\)/);
   assert.match(record, /MEETING_QUOTA_EXCEEDED/);
   assert.match(record, /AI_INSUFFICIENT_BALANCE/);
   assert.match(ai, /MEETING_QUOTA_EXCEEDED/);
