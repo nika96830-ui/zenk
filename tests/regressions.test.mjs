@@ -135,3 +135,11 @@ test('audio file upload is available and provider/quota errors are surfaced with
   assert.match(ai, /MEETING_QUOTA_EXCEEDED/);
   assert.match(ai, /AI_INSUFFICIENT_BALANCE/);
 });
+
+
+test('newly processed meeting is added to active state before navigation', () => {
+  const app = source('../src/App.tsx');
+  const record = source('../src/pages/Record.tsx');
+  assert.match(record, /onMeetingCreated\(result\.meeting\)/);
+  assert.match(app, /setMeetings\(\(previous\) => \[created, \.\.\.previous\.filter\(\(meeting\) => meeting\.id !== created\.id\)\]\)/);
+});
