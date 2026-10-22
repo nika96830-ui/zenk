@@ -154,3 +154,15 @@ test('retiring Stripe does not delete legacy payment data or rewrite existing pl
   assert.doesNotMatch(migration, /DROP\s+COLUMN|DROP\s+TABLE|UPDATE\s+public\.profiles\s+SET\s+plan/i);
   assert.match(migration, /Intentionally retain stripe_customer_id, subscription_status, and/i);
 });
+
+
+test('signup and password reset enforce an eight-character minimum', () => {
+  const auth = source('../src/services/auth.ts');
+  const authPage = source('../src/pages/Auth.tsx');
+  const resetPage = source('../src/pages/ResetPassword.tsx');
+  assert.match(auth, /function assertPasswordLength\(password: string\)[\s\S]*password\.length < 8/);
+  assert.match(auth, /signUp\([\s\S]*assertPasswordLength\(password\)/);
+  assert.match(auth, /updatePassword\([\s\S]*assertPasswordLength\(password\)/);
+  assert.match(authPage, /minLength=\{8\}/);
+  assert.equal((resetPage.match(/minLength=\{8\}/g) || []).length, 2);
+});
