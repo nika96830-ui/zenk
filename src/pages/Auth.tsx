@@ -63,7 +63,7 @@ export function AuthPage() {
           Z
         </div>
         <h1 style={{ fontSize: '1.8rem', color: 'var(--forest)', marginBottom: 8 }}>{t.appName}</h1>
-        <p style={{ color: 'var(--muted)' }}>{mode === 'login' ? t.auth.loginTitle : t.auth.registerTitle}</p>
+        <p style={{ color: 'var(--muted)' }}>{mode === 'login' ? t.auth.loginTitle : mode === 'reset' ? t.auth.resetPasswordTitle : t.auth.registerTitle}</p>
       </div>
       <form onSubmit={handleSubmit} style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
         {mode === 'register' && (
