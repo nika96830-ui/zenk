@@ -83,8 +83,12 @@ export function RecordPage() {
       console.error('Microphone access failed:', err);
       // If MediaRecorder construction/start or haptic setup fails after permission is granted,
       // release the device immediately instead of leaving the microphone active in the background.
-      if (mediaRecorderRef.current && mediaRecorderRef.current.state !== 'inactive') {
-        mediaRecorderRef.current.stop();
+      try {
+        if (mediaRecorderRef.current && mediaRecorderRef.current.state !== 'inactive') {
+          mediaRecorderRef.current.stop();
+        }
+      } catch {
+        // Stopping tracks below still releases the microphone if MediaRecorder.stop() throws.
       }
       mediaRecorderRef.current = null;
       streamRef.current?.getTracks().forEach((track) => track.stop());
