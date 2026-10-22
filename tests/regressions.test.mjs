@@ -33,15 +33,16 @@ test('offline loading records MEETINGS_LOAD_FAILED and never injects demo meetin
   assert.doesNotMatch(code, /setMeetings\(\s*DEMO/);
 });
 
-test('microphone tracks are stopped only by the unmount cleanup', () => {
+test('microphone tracks are released on setup failure and unmount', () => {
   const code = source('../src/pages/Record.tsx');
   const unmountEffect = /useEffect\(\(\)\s*=>\s*\(\)\s*=>\s*\{\s*streamRef\.current\?\.getTracks\(\)\.forEach\(\(track\)\s*=>\s*track\.stop\(\)\);?\s*\},\s*\[\]\);/;
   const timerEffect = code.match(/useEffect\(\(\)=>\{[\s\S]*?\},\[isRecording,isPaused\]\);/);
   assert.match(code, unmountEffect);
+  assert.match(code, /streamRef\.current\?\.getTracks\(\)\.forEach\(\(track\) => track\.stop\(\)\);/);
+  assert.match(code, /streamRef\.current = null;/);
   assert.ok(timerEffect);
   assert.doesNotMatch(timerEffect[0], /track\.stop\(\)/);
 });
-
 test('migration and processor enforce private quota-backed recordings', () => {
   const migration = source('../supabase/migrations/20261019000000_zenk_security_usage.sql');
   const processor = source('../supabase/functions/process-meeting/index.ts');
