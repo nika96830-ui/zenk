@@ -55,7 +55,6 @@ serve(async (req) => {
     if (req.method !== 'POST') return new Response('Method not allowed', { status: 405, headers });
     const body = await req.json(); meetingId = body.meetingId; const audioPath = body.audioPath; const language = body.language || 'ru';
     if (typeof meetingId !== 'string' || !meetingId) throw new Error('meetingId is required');
-    const validatedMeetingId = meetingId;
     const supabaseUrl = Deno.env.get('SUPABASE_URL'), serviceKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY'), anonKey = Deno.env.get('SUPABASE_ANON_KEY'), openAiKey = Deno.env.get('OPENAI_API_KEY');
     if (!supabaseUrl || !serviceKey || !anonKey) throw new Error('Supabase configuration is missing'); if (!openAiKey) throw new Error('OPENAI_API_KEY is not configured');
     const userClient = createClient<Database>(supabaseUrl, anonKey, { global: { headers: { Authorization: req.headers.get('Authorization') || '' } } });
@@ -90,7 +89,18 @@ serve(async (req) => {
     try { analysis = JSON.parse(analysisJson.choices[0].message.content); } catch { throw new Error('Invalid GPT JSON'); }
     const { error: updateError } = await admin.from('meetings').update({ title: analysis.title || meeting.title || 'Meeting', transcript, summary: analysis.summary || transcript.slice(0, 500), status: 'completed', updated_at: new Date().toISOString() }).eq('id', meetingId).eq('user_id', user.id);
     if (updateError) throw new Error('Failed to save meeting analysis');
-    const taskRows = (analysis.tasks || []).filter((task) => task?.title).map((task) => ({ meeting_id: validatedMeetingId, user_id: user.id, title: String(task.title).slice(0, 500), assignee: task.assignee || null, due_date: task.due_date || null, completed: false }));
+    // Build inserts from the owner-verified meeting row, not the optional request-body field.
+    // The explicit Insert[] contract keeps meeting_id required at compile time.
+    const taskRows: Database['public']['Tables']['tasks']['Insert'][] = (analysis.tasks || [])
+      .filter((task) => typeof task?.title === 'string' && task.title.trim().length > 0)
+      .map((task) => ({
+        meeting_id: meeting.id,
+        user_id: user.id,
+        title: task.title.trim().slice(0, 500),
+        assignee: task.assignee || null,
+        due_date: task.due_date || null,
+        completed: false,
+      }));
     if (taskRows.length) { const { error: tasksError } = await admin.from('tasks').insert(taskRows); if (tasksError) throw new Error('Failed to save meeting tasks'); }
     const { data: updated } = await admin.from('meetings').select('*').eq('id', meetingId).single(); const { data: tasks } = await admin.from('tasks').select('*').eq('meeting_id', meetingId);
     return new Response(JSON.stringify({ success: true, meeting: updated, tasks: tasks || [] }), { headers: { ...headers, 'Content-Type': 'application/json' } });
