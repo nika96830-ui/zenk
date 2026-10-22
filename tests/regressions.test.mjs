@@ -147,3 +147,10 @@ test('newly processed meeting is added to active state before navigation', () =>
   assert.match(record, /onMeetingCreated\(result\.meeting\)/);
   assert.match(app, /setMeetings\(\(previous\) => \[created, \.\.\.previous\.filter\(\(meeting\) => meeting\.id !== created\.id\)\]\)/);
 });
+
+
+test('retiring Stripe does not delete legacy payment data or rewrite existing plans', () => {
+  const migration = source('../supabase/migrations/20261021000000_remove_stripe.sql');
+  assert.doesNotMatch(migration, /DROP\s+COLUMN|DROP\s+TABLE|UPDATE\s+public\.profiles\s+SET\s+plan/i);
+  assert.match(migration, /Intentionally retain stripe_customer_id, subscription_status, and/i);
+});
