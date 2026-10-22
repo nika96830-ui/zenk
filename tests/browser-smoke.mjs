@@ -81,7 +81,7 @@ try {
         await route.fulfill({
           status: 200,
           contentType: 'application/json',
-          body: JSON.stringify({ user: mockUser, session: null }),
+          body: JSON.stringify(mockUser),
         });
         return;
       }
