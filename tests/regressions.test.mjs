@@ -9,3 +9,28 @@ test('failed meetings stay failed instead of being mapped to ready',()=>{const {
 test('offline loading never injects demo meetings after a failed request',()=>{const code=source('../src/hooks/useOffline.ts');assert.doesNotMatch(code,/DEMO_MEETINGS/);assert.match(code,/\.catch\(\(\) => \{\}\)/);});
 test('microphone tracks are stopped only by the unmount cleanup',()=>{const code=source('../src/pages/Record.tsx');const unmountEffect=/useEffect\(\(\)\s*=>\s*\(\)\s*=>\s*\{\s*streamRef\.current\?\.getTracks\(\)\.forEach\(\(track\)\s*=>\s*track\.stop\(\)\);?\s*\},\s*\[\]\);/;const timerEffect=code.match(/useEffect\(\(\)=>\{[\s\S]*?\},\[isRecording,isPaused\]\);/);assert.match(code,unmountEffect);assert.ok(timerEffect);assert.doesNotMatch(timerEffect[0],/track\.stop\(\)/);});
 test('migration and processor enforce private quota-backed recordings',()=>{const migration=source('../supabase/migrations/20261019000000_zenk_security_usage.sql');const processor=source('../supabase/functions/process-meeting/index.ts');assert.match(migration,/protect_profile_billing_fields/);assert.match(migration,/reserve_meeting_usage/);assert.match(migration,/file_size_limit/);assert.match(processor,/25 \* 1024 \* 1024/);assert.match(processor,/reserve_meeting_usage/);assert.match(processor,/Access-Control-Allow-Origin/);});
+
+test('export is owner-bound and does not trust client task arrays',()=>{
+  const code=source('../supabase/functions/export-tasks/index.ts');
+  assert.match(code,/eq\('user_id', user\.id\)/);
+  assert.match(code,/eq\('meeting_id', meeting\.id\)/);
+  assert.doesNotMatch(code,/body\.tasks/);
+  assert.match(code,/MAX_TASKS/);
+  assert.match(code,/MAX_EXPORT_BYTES/);
+  assert.match(code,/csvCell/);
+  assert.match(code,/\[=\+\\-@\]/);
+});
+test('task ownership migration prevents cross-owner task assignment',()=>{
+  const migration=source('../supabase/migrations/20261022000000_task_meeting_ownership.sql');
+  assert.match(migration,/enforce_task_meeting_owner/);
+  assert.match(migration,/meeting_owner <> NEW\.user_id/);
+  assert.match(migration,/auth\.uid\(\)/);
+  assert.match(migration,/WITH CHECK/);
+});
+test('offline task save failures are surfaced and rolled back',()=>{
+  const code=source('../src/hooks/useOffline.ts');
+  assert.match(code,/MEETINGS_LOAD_FAILED/);
+  assert.match(code,/TASK_SAVE_FAILED/);
+  assert.match(code,/previousDone/);
+  assert.match(code,/zang-meetings-cache:/);
+});
