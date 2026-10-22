@@ -4,28 +4,28 @@ import { chromium } from 'playwright';
 const baseUrl = process.env.ZANG_BASE_URL || 'http://127.0.0.1:4173';
 const locales = [
   {
-    code: 'ru', title: 'Войдите в аккаунт', error: 'Неверный email или пароль.',
+    code: 'ru', title: 'Войдите в аккаунт', error: 'Неверный email или пароль.', navRecord: 'Запись', recordTitle: 'Новая запись', startAria: 'Начать запись', micDenied: 'Нет доступа к микрофону.',
     forgot: 'Забыли пароль?', resetButton: 'Отправить ссылку',
     resetSuccess: 'Если адрес зарегистрирован, на него отправлена ссылка для сброса пароля.',
     hasAccount: 'Уже есть аккаунт? Войти', noAccount: 'Нет аккаунта? Зарегистрироваться',
     registerButton: 'Зарегистрироваться', confirmation: 'Проверьте почту и подтвердите адрес, чтобы войти.',
   },
   {
-    code: 'en', title: 'Sign in to your account', error: 'Incorrect email or password.',
+    code: 'en', title: 'Sign in to your account', error: 'Incorrect email or password.', navRecord: 'Record', recordTitle: 'New recording', startAria: 'Start recording', micDenied: 'No microphone access.',
     forgot: 'Forgot password?', resetButton: 'Send reset link',
     resetSuccess: 'If this email is registered, a password reset link has been sent.',
     hasAccount: 'Already have an account? Sign in', noAccount: 'No account? Sign up',
     registerButton: 'Sign up', confirmation: 'Check your email and confirm your address to sign in.',
   },
   {
-    code: 'az', title: 'Hesaba daxil olun', error: 'E-poçt və ya şifrə yanlışdır.',
+    code: 'az', title: 'Hesaba daxil olun', error: 'E-poçt və ya şifrə yanlışdır.', navRecord: 'Yazı', recordTitle: 'Yeni yazı', startAria: 'Yazıya başla', micDenied: 'Mikrofona giriş yoxdur.',
     forgot: 'Şifrənizi unutmusunuz?', resetButton: 'Bərpa linkini göndər',
     resetSuccess: 'Ünvan qeydiyyatlıdırsa, şifrənin bərpası linki e-poçta göndərildi.',
     hasAccount: 'Artıq hesabınız var? Daxil olun', noAccount: 'Hesabınız yoxdur? Qeydiyyatdan keçin',
     registerButton: 'Qeydiyyat', confirmation: 'Daxil olmaq üçün e-poçtunuzu təsdiqləyin.',
   },
   {
-    code: 'tr', title: 'Hesabınıza giriş yapın', error: 'E-posta veya şifre yanlış.',
+    code: 'tr', title: 'Hesabınıza giriş yapın', error: 'E-posta veya şifre yanlış.', navRecord: 'Kayıt', recordTitle: 'Yeni kayıt', startAria: 'Kaydı başlat', micDenied: 'Mikrofon erişimi yok.',
     forgot: 'Şifrenizi mi unuttunuz?', resetButton: 'Sıfırlama bağlantısı gönder',
     resetSuccess: 'E-posta kayıtlıysa parola sıfırlama bağlantısı gönderildi.',
     hasAccount: 'Zaten hesabınız var mı? Giriş yapın', noAccount: 'Hesabınız yok mu? Kayıt olun',
@@ -114,6 +114,61 @@ try {
 
     await page.close();
     console.log(`PASS browser auth, recovery, and confirmation flows: ${locale.code}`);
+  }
+
+  // Check the recording screen and microphone-denial recovery in every supported locale.
+  for (const locale of locales) {
+    const page = await browser.newPage();
+    await page.addInitScript((code) => {
+      localStorage.setItem('zenk-locale', code);
+      localStorage.setItem('zenk-onboarding-done', '1');
+      Object.defineProperty(navigator, 'mediaDevices', {
+        configurable: true,
+        value: { getUserMedia: async () => { throw new DOMException('Permission denied', 'NotAllowedError'); } },
+      });
+    }, locale.code);
+    await page.route('**/auth/v1/**', async (route) => {
+      const url = new URL(route.request().url());
+      if (url.pathname.endsWith('/token') && url.searchParams.get('grant_type') === 'password') {
+        await route.fulfill({
+          status: 200,
+          contentType: 'application/json',
+          body: JSON.stringify({
+            access_token: 'synthetic-access-token',
+            token_type: 'bearer',
+            expires_in: 3600,
+            refresh_token: 'synthetic-refresh-token',
+            user: mockUser,
+          }),
+        });
+        return;
+      }
+      if (url.pathname.endsWith('/user')) {
+        await route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify(mockUser) });
+        return;
+      }
+      await route.continue();
+    });
+    await page.route('**/rest/v1/**', async (route) => {
+      if (route.request().method() === 'GET') {
+        await route.fulfill({ status: 200, contentType: 'application/json', body: '[]' });
+        return;
+      }
+      await route.fulfill({ status: 204, body: '' });
+    });
+    await page.goto(baseUrl, { waitUntil: 'networkidle' });
+    await page.locator('input[type="email"]').fill('test-user@example.invalid');
+    await page.locator('input[type="password"]').fill('synthetic-password');
+    await page.locator('button[type="submit"]').click();
+    await page.getByText(locale.navRecord, { exact: true }).waitFor({ state: 'visible' });
+    await page.getByText(locale.navRecord, { exact: true }).click();
+    await page.getByText(locale.recordTitle, { exact: true }).waitFor({ state: 'visible' });
+    await page.getByRole('button', { name: locale.startAria }).click();
+    await page.getByRole('status').waitFor({ state: 'visible' });
+    assert.equal((await page.getByRole('status').innerText()).trim(), locale.micDenied, `localized microphone denial: ${locale.code}`);
+    await page.getByRole('button', { name: locale.startAria }).waitFor({ state: 'visible' });
+    console.log(`PASS recording screen and microphone-denial recovery: ${locale.code}`);
+    await page.close();
   }
 
   // End-to-end recording smoke test. All network responses and audio are synthetic;
