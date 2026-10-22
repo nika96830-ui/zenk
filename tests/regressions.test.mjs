@@ -8,7 +8,7 @@ function loadMapMeeting(){const compiled=ts.transpileModule(source('../src/lib/m
 test('failed meetings stay failed instead of being mapped to ready',()=>{const {mapStatus,mapMeeting}=loadMapMeeting();assert.equal(mapStatus('failed'),'failed');assert.equal(mapMeeting({id:'m-1',status:'failed'}).status,'failed');assert.equal(mapStatus('completed'),'ready');});
 test('offline loading never injects demo meetings after a failed request',()=>{const code=source('../src/hooks/useOffline.ts');assert.doesNotMatch(code,/DEMO_MEETINGS/);assert.match(code,/MEETINGS_LOAD_FAILED/);assert.match(code,/\.catch\(\(\) => \{/);});
 test('microphone tracks are stopped only by the unmount cleanup',()=>{const code=source('../src/pages/Record.tsx');const unmountEffect=/useEffect\(\(\)\s*=>\s*\(\)\s*=>\s*\{\s*streamRef\.current\?\.getTracks\(\)\.forEach\(\(track\)\s*=>\s*track\.stop\(\)\);?\s*\},\s*\[\]\);/;const timerEffect=code.match(/useEffect\(\(\)=>\{[\s\S]*?\},\[isRecording,isPaused\]\);/);assert.match(code,unmountEffect);assert.ok(timerEffect);assert.doesNotMatch(timerEffect[0],/track\.stop\(\)/);});
-test('migration and processor enforce private quota-backed recordings',()=>{const migration=source('../supabase/migrations/20261019000000_zenk_security_usage.sql');const processor=source('../supabase/functions/process-meeting/index.ts');assert.match(migration,/protect_profile_billing_fields/);assert.match(migration,/reserve_meeting_usage/);assert.match(migration,/file_size_limit/);assert.match(processor,/25 \* 1024 \* 1024/);assert.match(processor,/reserve_meeting_usage/);assert.match(processor,/Access-Control-Allow-Origin/);});
+test('migration and processor enforce private quota-backed recordings',()=>{const migration=source('../supabase/migrations/20261019000000_zenk_security_usage.sql');const processor=source('../supabase/functions/process-meeting/index.ts');assert.match(migration,/protect_profile_billing_fields/);assert.match(migration,/reserve_meeting_usage/);assert.match(migration,/file_size_limit/);assert.match(processor,/25 \* 1024 \* 1024/);assert.match(processor,/reserve_meeting_usage/);assert.match(processor,/Access-Control-Allow-Origin/);assert.doesNotMatch(processor,/function configuredOrigin\(\): string \{ const configured = Deno\.env\.get\('ALLOWED_ORIGIN'\); if \(!configured\) throw/);assert.match(processor,/configured \? new URL\(configured\)\.origin : '\*'/);});
 
 test('export is owner-bound and does not trust client task arrays',()=>{
   const code=source('../supabase/functions/export-tasks/index.ts');
@@ -26,6 +26,21 @@ test('task ownership migration prevents cross-owner task assignment',()=>{
   assert.match(migration,/meeting_owner <> NEW\.user_id/);
   assert.match(migration,/auth\.uid\(\)/);
   assert.match(migration,/WITH CHECK/);
+});
+test('JWT, owner checks, and server-side quota reservation remain enabled',()=>{
+  const config=source('../supabase/config.toml');
+  const processor=source('../supabase/functions/process-meeting/index.ts');
+  const exportFunction=source('../supabase/functions/export-tasks/index.ts');
+  const quotaMigration=source('../supabase/migrations/20261019000000_zenk_security_usage.sql');
+  assert.match(config,/\[functions\.process-meeting\]\s*verify_jwt = true/);
+  assert.match(config,/\[functions\.export-tasks\]\s*verify_jwt = true/);
+  assert.match(processor,/auth\.getUser\(\)/);
+  assert.match(processor,/\.eq\('user_id', user\.id\)/);
+  assert.match(processor,/reserve_meeting_usage/);
+  assert.match(exportFunction,/auth\.getUser\(\)/);
+  assert.match(exportFunction,/\.eq\('user_id', user\.id\)/);
+  assert.match(quotaMigration,/REVOKE ALL ON FUNCTION public\.reserve_meeting_usage/);
+  assert.match(quotaMigration,/GRANT EXECUTE ON FUNCTION public\.reserve_meeting_usage\(uuid, uuid, date, integer\) TO service_role/);
 });
 test('normalized authentication failures are localized in every supported locale',()=>{
   const auth=source('../src/pages/Auth.tsx');
