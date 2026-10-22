@@ -79,7 +79,7 @@ serve(async (req) => {
     const whisperJson = await whisperResponse.json(); if (!whisperResponse.ok) throw new Error(whisperJson?.error?.message || 'Whisper failed'); const transcript = (whisperJson.text || '').trim(); if (!transcript) throw new Error('Empty transcript');
     const analysisResponse = await fetch('https://api.openai.com/v1/chat/completions', {
       method: 'POST', headers: { Authorization: `Bearer ${openAiKey}`, 'Content-Type': 'application/json' },
-      body: JSON.stringify({ model: 'gpt-4o-mini', temperature: 0.2, response_format: { type: 'json_object' }, messages: [
+      body: JSON.stringify({ model: 'gpt-6-luna', reasoning_effort: 'none', response_format: { type: 'json_object' }, messages: [
         { role: 'system', content: 'You are Zenk meeting assistant. Reply JSON only: ' + '{"title":"short meeting title","summary":"bullet-style minutes in the same language as the transcript","tasks":[{"title":"action item","assignee":null,"due_date":null}]}. ' + 'due_date ISO date if mentioned, else null. No invented facts.' },
         { role: 'user', content: transcript },
       ] }),
