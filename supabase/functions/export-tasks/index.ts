@@ -28,12 +28,16 @@ function json(body: unknown, status: number, headers: Record<string, string>) {
 serve(async (req) => {
   let cors: Record<string, string> = {};
   try {
+    // CORS is a browser boundary, not authorization: every request still requires a verified
+    // Supabase user and owner-scoped RLS queries. ALLOWED_ORIGIN is optional so the documented
+    // deployment setup does not silently disable exports when that extra secret is absent.
     const configuredOrigin = Deno.env.get('ALLOWED_ORIGIN');
-    if (!configuredOrigin) return json({ success: false, message: 'SERVER_CONFIGURATION_ERROR' }, 500, {});
-    const origin = new URL(configuredOrigin).origin;
-    cors = corsHeaders(origin);
     const requestOrigin = req.headers.get('Origin');
-    if (requestOrigin && requestOrigin !== origin) return json({ success: false, message: 'ORIGIN_NOT_ALLOWED' }, 403, cors);
+    const origin = configuredOrigin ? new URL(configuredOrigin).origin : '*';
+    cors = corsHeaders(origin);
+    if (configuredOrigin && requestOrigin && requestOrigin !== origin) {
+      return json({ success: false, message: 'ORIGIN_NOT_ALLOWED' }, 403, cors);
+    }
     if (req.method === 'OPTIONS') return new Response('ok', { headers: cors });
     if (req.method !== 'POST') return json({ success: false, message: 'METHOD_NOT_ALLOWED' }, 405, cors);
 
