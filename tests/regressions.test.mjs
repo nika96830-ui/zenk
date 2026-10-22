@@ -163,6 +163,8 @@ test('signup and password reset enforce an eight-character minimum', () => {
   assert.match(auth, /function assertPasswordLength\(password: string\)[\s\S]*password\.length < 8/);
   assert.match(auth, /signUp\([\s\S]*assertPasswordLength\(password\)/);
   assert.match(auth, /updatePassword\([\s\S]*assertPasswordLength\(password\)/);
-  assert.match(authPage, /minLength=\{mode === 'register' \? 8 : undefined\}/);
-  assert.equal((resetPage.match(/minLength=\{8\}/g) || []).length, 2);
+  assert.match(authPage, /AUTH_PASSWORD_TOO_SHORT: t\.auth\.passwordTooShort/);
+  assert.match(resetPage, /AUTH_PASSWORD_TOO_SHORT/);
+  assert.doesNotMatch(authPage, /minLength=/);
+  assert.doesNotMatch(resetPage, /minLength=/);
 });
