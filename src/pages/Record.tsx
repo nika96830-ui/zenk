@@ -81,6 +81,16 @@ export function RecordPage() {
       await hapticLight();
     } catch (err) {
       console.error('Microphone access failed:', err);
+      // If MediaRecorder construction/start or haptic setup fails after permission is granted,
+      // release the device immediately instead of leaving the microphone active in the background.
+      if (mediaRecorderRef.current && mediaRecorderRef.current.state !== 'inactive') {
+        mediaRecorderRef.current.stop();
+      }
+      mediaRecorderRef.current = null;
+      streamRef.current?.getTracks().forEach((track) => track.stop());
+      streamRef.current = null;
+      setIsRecording(false);
+      setIsPaused(false);
       setStatusText(t.record.micDenied);
       await hapticError();
     }
