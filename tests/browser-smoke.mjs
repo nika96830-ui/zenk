@@ -115,6 +115,135 @@ try {
     await page.close();
     console.log(`PASS browser auth, recovery, and confirmation flows: ${locale.code}`);
   }
+
+  // End-to-end recording smoke test. All network responses and audio are synthetic;
+  // this must never call a real Supabase project or a paid AI provider.
+  const page = await browser.newPage();
+  await page.addInitScript(() => {
+    localStorage.setItem('zenk-locale', 'en');
+    localStorage.setItem('zenk-onboarding-done', '1');
+    const tracks = [{ stop: () => { window.__zangTrackStopped = true; } }];
+    Object.defineProperty(navigator, 'mediaDevices', {
+      configurable: true,
+      value: { getUserMedia: async () => ({ getTracks: () => tracks }) },
+    });
+    class FakeMediaRecorder {
+      static isTypeSupported() { return true; }
+      constructor(_stream, options) {
+        this.mimeType = options?.mimeType || 'audio/webm';
+        this.state = 'inactive';
+        this.ondataavailable = null;
+        this.onstop = null;
+      }
+      start() { this.state = 'recording'; }
+      pause() { this.state = 'paused'; }
+      resume() { this.state = 'recording'; }
+      stop() {
+        this.state = 'inactive';
+        this.ondataavailable?.({ data: new Blob(['synthetic audio bytes'], { type: this.mimeType }) });
+        this.onstop?.();
+      }
+    }
+    Object.defineProperty(window, 'MediaRecorder', { configurable: true, writable: true, value: FakeMediaRecorder });
+  });
+
+  await page.route('**/auth/v1/**', async (route) => {
+    const url = new URL(route.request().url());
+    if (url.pathname.endsWith('/token') && url.searchParams.get('grant_type') === 'password') {
+      await route.fulfill({
+        status: 200,
+        contentType: 'application/json',
+        body: JSON.stringify({
+          access_token: 'synthetic-access-token',
+          token_type: 'bearer',
+          expires_in: 3600,
+          refresh_token: 'synthetic-refresh-token',
+          user: mockUser,
+        }),
+      });
+      return;
+    }
+    if (url.pathname.endsWith('/user')) {
+      await route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify(mockUser) });
+      return;
+    }
+    await route.continue();
+  });
+  await page.route('**/storage/v1/**', async (route) => {
+    if (route.request().method() === 'POST') {
+      await route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ Key: 'recordings/synthetic/test.webm' }) });
+      return;
+    }
+    await route.continue();
+  });
+  await page.route('**/rest/v1/**', async (route) => {
+    const url = new URL(route.request().url());
+    if (url.pathname.endsWith('/meetings') && route.request().method() === 'POST') {
+      const body = route.request().postDataJSON();
+      await route.fulfill({
+        status: 201,
+        contentType: 'application/json',
+        headers: { 'content-range': '*/1', 'preference-applied': 'return=representation' },
+        body: JSON.stringify({
+          id: '33333333-3333-4333-8333-333333333333',
+          user_id: mockUser.id,
+          title: body.title,
+          status: 'processing',
+          audio_path: body.audio_path,
+          created_at: '2026-10-22T00:00:00Z',
+          summary: null,
+          transcript: null,
+        }),
+      });
+      return;
+    }
+    if (route.request().method() === 'GET') {
+      await route.fulfill({ status: 200, contentType: 'application/json', body: '[]' });
+      return;
+    }
+    await route.fulfill({ status: 204, body: '' });
+  });
+  await page.route('**/functions/v1/process-meeting', async (route) => {
+    await route.fulfill({
+      status: 200,
+      contentType: 'application/json',
+      body: JSON.stringify({
+        meeting: {
+          id: '33333333-3333-4333-8333-333333333333',
+          user_id: mockUser.id,
+          title: 'New meeting',
+          status: 'ready',
+          summary: 'Synthetic protocol: agree the next steps.',
+          transcript: 'Synthetic transcript',
+          created_at: '2026-10-22T00:00:00Z',
+        },
+        tasks: [{
+          id: '44444444-4444-4444-8444-444444444444',
+          meeting_id: '33333333-3333-4333-8333-333333333333',
+          user_id: mockUser.id,
+          title: 'Send the proposal',
+          assignee: 'Browser Test',
+          due_date: '2026-10-23',
+          completed: false,
+        }],
+      }),
+    });
+  });
+
+  await page.goto(baseUrl, { waitUntil: 'networkidle' });
+  await page.locator('input[type="email"]').fill('test-user@example.invalid');
+  await page.locator('input[type="password"]').fill('synthetic-password');
+  await page.locator('button[type="submit"]').click();
+  await page.getByText('Record', { exact: true }).waitFor({ state: 'visible' });
+  await page.getByText('Record', { exact: true }).click();
+  await page.getByRole('button', { name: 'Start recording' }).click();
+  await page.getByRole('button', { name: 'Stop recording' }).waitFor({ state: 'visible' });
+  await page.getByRole('button', { name: 'Stop recording' }).click();
+  await page.getByText('Synthetic protocol: agree the next steps.', { exact: true }).waitFor({ state: 'visible' });
+  await page.getByText('Send the proposal', { exact: true }).waitFor({ state: 'visible' });
+  assert.equal(await page.evaluate(() => window.__zangTrackStopped === true), true, 'microphone track must be released after stop');
+  console.log('PASS mocked browser recording → meeting detail → task rendering and microphone cleanup');
+  await page.close();
 } finally {
   await browser.close();
 }
