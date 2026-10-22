@@ -51,7 +51,7 @@ export function ResetPasswordPage() {
       ) : (
         <form onSubmit={submit} style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
           <input type="password" autoComplete="new-password" placeholder={t.auth.newPassword} value={password} onChange={(event) => setPassword(event.target.value)} required minLength={8} />
-          <input type="password" autoComplete="new-password" placeholder={t.auth.confirmPassword} value={confirmPassword} onChange={(event) => setConfirmPassword(event.target.value)} required minLength={6} />
+          <input type="password" autoComplete="new-password" placeholder={t.auth.confirmPassword} value={confirmPassword} onChange={(event) => setConfirmPassword(event.target.value)} required minLength={8} />
           {error && <p role="alert" style={{ color: 'var(--danger)', textAlign: 'center' }}>{error}</p>}
           <button type="submit" className="btn btn-primary btn-block" disabled={loading}>{loading ? t.loading : t.auth.savePassword}</button>
         </form>
