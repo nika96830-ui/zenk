@@ -56,6 +56,8 @@ test('migration and processor enforce private quota-backed recordings', () => {
   assert.match(processor, /reserve_meeting_usage/);
   assert.match(processor, /form\.append\('model', 'gpt-transcribe'\)/);
   assert.doesNotMatch(processor, /form\.append\('model', 'whisper-1'\)/);
+  assert.match(processor, /model: 'gpt-6-luna', reasoning_effort: 'none'/);
+  assert.doesNotMatch(processor, /model: 'gpt-4o-mini'/);
   assert.match(processor, /Access-Control-Allow-Origin/);
   assert.match(processor, /configured \? new URL\(configured\)\.origin : '\*'/);
 });
