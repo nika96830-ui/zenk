@@ -19,3 +19,33 @@ jobs:
       - run: npx tsc --noEmit
       - run: npx vite build
       - run: node --test tests/regressions.test.mjs
+
+  api-grants-migration-test:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: zang_grants_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres -d zang_grants_test"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 12
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install PostgreSQL client
+        run: |
+          sudo apt-get update
+          sudo apt-get install --yes postgresql-client
+      - name: Apply explicit-grants migration to isolated fixture and assert privileges
+        env:
+          PGPASSWORD: postgres
+        run: |
+          psql "host=127.0.0.1 port=5432 dbname=zang_grants_test user=postgres" -v ON_ERROR_STOP=1 \
+            -f tests/sql/api-grants-fixture.sql \
+            -f supabase/migrations/20261024000000_explicit_api_grants.sql \
+            -f tests/sql/api-grants-assertions.sql
