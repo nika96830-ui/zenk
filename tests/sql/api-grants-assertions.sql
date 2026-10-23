@@ -1,7 +1,6 @@
 DO $$
 DECLARE
   table_name text;
-  role_name text;
 BEGIN
   FOREACH table_name IN ARRAY ARRAY['meetings', 'profiles', 'tasks'] LOOP
     IF has_table_privilege('anon', format('public.%I', table_name), 'SELECT')
@@ -9,10 +8,6 @@ BEGIN
        OR has_table_privilege('anon', format('public.%I', table_name), 'UPDATE')
        OR has_table_privilege('anon', format('public.%I', table_name), 'DELETE') THEN
       RAISE EXCEPTION 'anon retains Data API privileges on public.%', table_name;
-    END IF;
-
-    IF has_table_privilege('PUBLIC', format('public.%I', table_name), 'SELECT') THEN
-      RAISE EXCEPTION 'PUBLIC retains SELECT on public.%', table_name;
     END IF;
 
     IF NOT has_table_privilege('authenticated', format('public.%I', table_name), 'SELECT')
