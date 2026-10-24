@@ -298,6 +298,17 @@ try {
   await page.getByText('Send the proposal', { exact: true }).waitFor({ state: 'visible' });
   assert.equal(await page.evaluate(() => window.__zangTrackStopped === true), true, 'microphone track must be released after stop');
   console.log('PASS mocked browser recording → meeting detail → task rendering and microphone cleanup');
+  await page.route('**/functions/v1/export-tasks', route => route.fulfill({ status: 500, contentType: 'application/json', body: JSON.stringify({ success: false }) }));
+  await page.getByRole('button', { name: /Notion/ }).click();
+  await page.getByRole('alert').waitFor({ state: 'visible' });
+  assert.equal(await page.getByRole('alert').innerText(), 'Could not export.');
+  await page.route('**/functions/v1/export-tasks', route => route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ success: true, content: 'Task,Done\\nSynthetic,yes', format: 'csv' }) }));
+  const downloadPromise = page.waitForEvent('download');
+  await page.getByRole('button', { name: /Notion/ }).click();
+  const download = await downloadPromise;
+  assert.equal(download.suggestedFilename(), 'zang-tasks.csv');
+  assert.equal(await page.getByRole('alert').count(), 0);
+  console.log('PASS mocked export: visible error, retry and CSV download');
   await page.close();
 } finally {
   await browser.close();

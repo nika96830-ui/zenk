@@ -14,6 +14,7 @@ export function MeetingDetailPage({ meetings, onToggleTask }: Props) {
   const navigate = useNavigate();
   const { t } = useI18n();
   const [exporting, setExporting] = useState(false);
+  const [exportFailed, setExportFailed] = useState(false);
   const meeting = meetings.find((m) => m.id === id);
 
   if (!meeting) {
@@ -28,9 +29,14 @@ export function MeetingDetailPage({ meetings, onToggleTask }: Props) {
   const doExport = async (target: 'notion' | 'trello') => {
     if (!meeting.tasks.length) return;
     setExporting(true);
+    setExportFailed(false);
     try {
-      if (target === 'notion') await exportToNotion(meeting.id, meeting.title, meeting.tasks);
-      else await exportToTrello(meeting.id, meeting.title, meeting.tasks);
+      const result = target === 'notion'
+        ? await exportToNotion(meeting.id, meeting.title, meeting.tasks)
+        : await exportToTrello(meeting.id, meeting.title, meeting.tasks);
+      setExportFailed(!result.success);
+    } catch {
+      setExportFailed(true);
     } finally {
       setExporting(false);
     }
@@ -64,6 +70,7 @@ export function MeetingDetailPage({ meetings, onToggleTask }: Props) {
             </ul>
           )}
           <h2 style={{ marginTop: 24, marginBottom: 8 }}>{t.meeting.exportTitle}</h2>
+          {exportFailed && <p role="alert">{t.errors.export}</p>}
           <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap' }}>
             <button className="btn btn-secondary" disabled={exporting || !meeting.tasks.length} onClick={() => doExport('notion')}>{t.meeting.exportNotion}</button>
             <button className="btn btn-secondary" disabled={exporting || !meeting.tasks.length} onClick={() => doExport('trello')}>{t.meeting.exportTrello}</button>
