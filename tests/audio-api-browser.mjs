@@ -71,6 +71,7 @@ try {
   // Exercise the browser's actual encoder and decoder with a generated tone.
   // This is not a microphone, speech-recognition, Safari-device or physical-iPhone test.
   const codec = await page.evaluate(async () => {
+    if (typeof MediaRecorder === 'undefined') return { unsupported: true };
     const context = new AudioContext();
     const tone = context.createOscillator(), destination = context.createMediaStreamDestination();
     tone.connect(destination); tone.start(); await context.resume();
@@ -90,8 +91,13 @@ try {
       return { mime: recorder.mimeType, bytes: blob.size };
     } finally { audio.pause(); URL.revokeObjectURL(url); }
   });
-  assert.ok(codec.bytes > 0);
-  console.log(`PASS ${engine}: actual browser encode → stop → decode/playback of generated tone (${codec.mime}, ${codec.bytes} bytes)`);
+  if (codec.unsupported) {
+    assert.equal(engine, 'webkit', 'Chromium codec coverage must remain available');
+    console.log('SKIP webkit native recording/playback: this Linux build has no MediaRecorder; physical Safari acceptance is still required');
+  } else {
+    assert.ok(codec.bytes > 0);
+    console.log(`PASS ${engine}: actual browser encode → stop → decode/playback of generated tone (${codec.mime}, ${codec.bytes} bytes)`);
+  }
 } finally {
   await browser?.close();
   await server.close();
