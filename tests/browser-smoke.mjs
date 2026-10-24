@@ -65,7 +65,7 @@ try {
     await page.addInitScript((value) => localStorage.setItem('zenk-locale', value), locale.code);
     await page.route('**/auth/v1/**', async (route) => {
       const url = new URL(route.request().url());
-      if (url.pathname.endsWith('/token')) {
+      if (url.pathname.endsWith('/token') && url.searchParams.get('grant_type') === 'password') {
         await route.fulfill({
           status: 400,
           contentType: 'application/json',
@@ -129,7 +129,7 @@ try {
     }, locale.code);
     await page.route('**/auth/v1/**', async (route) => {
       const url = new URL(route.request().url());
-      if (url.pathname.endsWith('/token')) {
+      if (url.pathname.endsWith('/token') && url.searchParams.get('grant_type') === 'password') {
         await route.fulfill({
           status: 200,
           contentType: 'application/json',
@@ -204,7 +204,7 @@ try {
 
   await page.route('**/auth/v1/**', async (route) => {
     const url = new URL(route.request().url());
-    if (url.pathname.endsWith('/token')) {
+    if (url.pathname.endsWith('/token') && url.searchParams.get('grant_type') === 'password') {
       await route.fulfill({
         status: 200,
         contentType: 'application/json',

@@ -29,8 +29,8 @@ export function MeetingDetailPage({ meetings, onToggleTask }: Props) {
     if (!meeting.tasks.length) return;
     setExporting(true);
     try {
-      if (target === 'notion') await exportToNotion(meeting.title, meeting.tasks);
-      else await exportToTrello(meeting.title, meeting.tasks);
+      if (target === 'notion') await exportToNotion(meeting.id, meeting.title, meeting.tasks);
+      else await exportToTrello(meeting.id, meeting.title, meeting.tasks);
     } finally {
       setExporting(false);
     }

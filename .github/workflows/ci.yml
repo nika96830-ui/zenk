@@ -2,9 +2,9 @@ name: CI
 
 on:
   push:
-    branches: [main, 'fix/**']
+    branches: [main, fix/zang-explicit-api-grants]
   pull_request:
-    branches: [main]
+    branches: [main, fix/zang-production-hardening]
 
 jobs:
   build:
