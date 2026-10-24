@@ -175,7 +175,7 @@ test('signup and password reset enforce an eight-character minimum', () => {
 test('Data API migration removes anonymous grants without disabling RLS', () => {
   const migration = source('../supabase/migrations/20261024000000_explicit_api_grants.sql');
   assert.match(migration, /REVOKE ALL ON TABLE public\.meetings, public\.profiles, public\.tasks FROM PUBLIC, anon/);
-  assert.match(migration, /GRANT SELECT, INSERT, UPDATE, DELETE[\\s\\S]*TO authenticated/);
-  assert.match(migration, /GRANT ALL[\\s\\S]*TO service_role/);
+  assert.match(migration, /GRANT SELECT, INSERT, UPDATE, DELETE[\s\S]*TO authenticated/);
+  assert.match(migration, /GRANT ALL[\s\S]*TO service_role/);
   assert.doesNotMatch(migration, /DISABLE ROW LEVEL SECURITY|DROP POLICY|DROP TABLE|TRUNCATE|DELETE FROM/i);
 });
