@@ -18,7 +18,52 @@ jobs:
       - run: npm ci
       - run: npx tsc --noEmit
       - run: npx vite build
+      - name: Install headless browser for mocked E2E
+        run: |
+          npm install --no-save playwright@1.56.1
+          npx playwright install --with-deps chromium
+      - name: Run browser smoke tests with mocked Supabase Auth
+        run: |
+          npx vite preview --host 127.0.0.1 > /tmp/zang-vite-preview.log 2>&1 &
+          echo $! > /tmp/zang-vite-preview.pid
+          node tests/browser-smoke.mjs
       - run: node --test tests/regressions.test.mjs
+      - name: Set up Deno
+        uses: denoland/setup-deno@v2
+        with:
+          deno-version: v2.x
+      - name: Type-check Supabase Edge Functions
+        run: deno check --no-lock supabase/functions/process-meeting/index.ts supabase/functions/export-tasks/index.ts
+
+  migration-test:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: zang_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres -d zang_test"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 12
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install PostgreSQL client
+        run: |
+          sudo apt-get update
+          sudo apt-get install --yes postgresql-client
+      - name: Apply ownership migration and verify RLS using synthetic users
+        env:
+          PGPASSWORD: postgres
+        run: |
+          psql "host=127.0.0.1 port=5432 dbname=zang_test user=postgres" -v ON_ERROR_STOP=1 \
+            -f tests/sql/task-ownership-fixture.sql \
+            -f supabase/migrations/20261022000000_task_meeting_ownership.sql \
+            -f tests/sql/task-ownership-assertions.sql
 
   api-grants-migration-test:
     runs-on: ubuntu-latest
@@ -49,3 +94,47 @@ jobs:
             -f tests/sql/api-grants-fixture.sql \
             -f supabase/migrations/20261024000000_explicit_api_grants.sql \
             -f tests/sql/api-grants-assertions.sql
+
+  supabase-local-e2e:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - name: Initialize isolated Supabase CLI workspace
+        run: |
+          mkdir -p /tmp/zang-local-supabase
+          cd /tmp/zang-local-supabase
+          npx --yes supabase@latest init
+      - name: Start ephemeral local Supabase services
+        working-directory: /tmp/zang-local-supabase
+        run: npx --yes supabase@latest start -x studio,inbucket,logflare,vector,analytics
+      - name: Export local Supabase test credentials
+        working-directory: /tmp/zang-local-supabase
+        run: |
+          eval "$(npx --yes supabase@latest status -o env)"
+          echo "SUPABASE_URL=$API_URL" >> "$GITHUB_ENV"
+          echo "SUPABASE_ANON_KEY=$ANON_KEY" >> "$GITHUB_ENV"
+          echo "SUPABASE_SERVICE_ROLE_KEY=$SERVICE_ROLE_KEY" >> "$GITHUB_ENV"
+          echo "SUPABASE_DB_URL=$DB_URL" >> "$GITHUB_ENV"
+      - name: Create synthetic schema and apply project migrations locally
+        env:
+          PGPASSWORD: postgres
+        run: |
+          psql "$SUPABASE_DB_URL" -v ON_ERROR_STOP=1 \
+            -f tests/sql/local-supabase-base.sql \
+            -f supabase/migrations/20261019000000_zenk_security_usage.sql \
+            -f supabase/migrations/20261021000000_remove_stripe.sql \
+            -f supabase/migrations/20261022000000_task_meeting_ownership.sql \
+            -f supabase/migrations/20261024000000_explicit_api_grants.sql
+      - name: Validate Supabase E2E test syntax
+        run: node --check tests/supabase-local-e2e.mjs
+      - name: Verify real local Auth, two-user RLS, and usage quota
+        run: node tests/supabase-local-e2e.mjs
+      - name: Stop ephemeral Supabase services
+        if: always()
+        working-directory: /tmp/zang-local-supabase
+        run: npx --yes supabase@latest stop --no-backup
