@@ -1,7 +1,7 @@
 import { useState, useEffect } from 'react';
 import type { Meeting } from '../types';
 import { useAuth } from './useAuth';
-import { fetchMeetings, toggleTaskRemote } from '../services/meetings';
+import { fetchMeetings, toggleTaskRemote, editTaskRemote } from '../services/meetings';
 
 const CACHE_PREFIX = 'zang-meetings-cache:';
 
@@ -109,5 +109,12 @@ export function useOffline() {
       });
   };
 
-  return { isOnline, meetings, setMeetings, updateMeeting, toggleTask, syncError };
+  const editTask = async (meetingId: string, taskId: string, changes: import('../components/TaskEditor').TaskChanges) => {
+    const saved = await editTaskRemote(meetingId, taskId, changes);
+    setMeetings(previous => previous.map(meeting => meeting.id !== meetingId ? meeting : {
+      ...meeting, tasks: meeting.tasks.map(task => task.id === taskId ? saved : task),
+    }));
+  };
+
+  return { editTask, isOnline, meetings, setMeetings, updateMeeting, toggleTask, syncError };
 }

@@ -1,3 +1,5 @@
+import { RecordingPlayer } from '../components/RecordingPlayer';
+import { TaskEditor, type TaskChanges } from '../components/TaskEditor';
 import { useParams, useNavigate } from 'react-router-dom';
 import type { Meeting } from '../types';
 import { useI18n } from '../i18n/I18nProvider';
@@ -6,10 +8,11 @@ import { useState } from 'react';
 
 interface Props {
   meetings: Meeting[];
+  onEditTask: (meetingId: string, taskId: string, changes: TaskChanges) => Promise<void>;
   onToggleTask: (meetingId: string, taskId: string) => void;
 }
 
-export function MeetingDetailPage({ meetings, onToggleTask }: Props) {
+export function MeetingDetailPage({ meetings, onToggleTask, onEditTask }: Props) {
   const { id } = useParams();
   const navigate = useNavigate();
   const { t } = useI18n();
@@ -46,6 +49,7 @@ export function MeetingDetailPage({ meetings, onToggleTask }: Props) {
     <div style={{ padding: '16px 16px 40px' }}>
       <button className="btn btn-secondary" onClick={() => navigate('/')} style={{ marginBottom: 16 }}>{t.meeting.back}</button>
       <h1 style={{ fontSize: '1.4rem', color: 'var(--forest)', marginBottom: 8 }}>{meeting.title}</h1>
+      <RecordingPlayer key={meeting.id} meetingId={meeting.id} />
       {meeting.status === 'processing' ? (
         <div className="empty-state">
           <p>{t.meeting.processingTitle}</p>
@@ -64,6 +68,7 @@ export function MeetingDetailPage({ meetings, onToggleTask }: Props) {
                   <div>
                     <div style={{ textDecoration: task.done ? 'line-through' : 'none' }}>{task.title}</div>
                     <div style={{ fontSize: '0.85rem', color: 'var(--muted)' }}>{task.assignee}{task.deadline ? ` · ${task.deadline}` : ''}</div>
+                    <TaskEditor task={task} onSave={changes => onEditTask(meeting.id, task.id, changes)} />
                   </div>
                 </li>
               ))}

@@ -75,7 +75,7 @@ try {
   assert.equal(crossOwnerUpdate.error, null, 'RLS should silently filter unauthorized task update');
   assert.deepEqual(crossOwnerUpdate.data, [], 'user B must not update user A task');
 
-  const validUpdate = await clientA.from('tasks').update({ completed: true }).eq('id', taskA.id).select('id').single();
+  const validUpdate = await clientA.from('tasks').update({ completed: true, title: 'Edited task', assignee: 'QA', due_date: '2026-11-05' }).eq('id', taskA.id).select('id').single();
   assert.equal(validUpdate.error, null, 'owner task update: ' + (validUpdate.error?.message || ''));
   assert.equal(validUpdate.data.id, taskA.id);
 
@@ -84,9 +84,12 @@ try {
   const persistedMeeting = await clientA.from('meetings').select('title').eq('id', meetingA.id).single();
   assert.equal(persistedMeeting.error, null);
   assert.equal(persistedMeeting.data.title, 'Synthetic meeting A');
-  const persistedTask = await clientA.from('tasks').select('completed').eq('id', taskA.id).single();
+  const persistedTask = await clientA.from('tasks').select('completed,title,assignee,due_date').eq('id', taskA.id).single();
   assert.equal(persistedTask.error, null);
   assert.equal(persistedTask.data.completed, true);
+  assert.equal(persistedTask.data.title, 'Edited task');
+  assert.equal(persistedTask.data.assignee, 'QA');
+  assert.equal(persistedTask.data.due_date, '2026-11-05');
   console.log('PASS local Supabase persistence: meeting and task update survive sign-out and sign-in');
 
   const planEscalation = await clientA.from('profiles').update({ plan: 'pro' }).eq('id', userA.id).select('plan').single();
@@ -100,6 +103,10 @@ try {
   assert.equal((await clientA.storage.from('recordings').download(audioPath)).error, null, 'owner may read recording');
   assert.ok((await clientB.storage.from('recordings').download(audioPath)).error, 'other user may not read recording');
   assert.ok((await clientB.storage.from('recordings').upload(`${userA.id}/forged.m4a`, new Blob(['synthetic']), { contentType: 'audio/mp4' })).error, 'other user may not upload into owner folder');
+  const signed = await clientA.storage.from('recordings').createSignedUrl(audioPath, 300);
+  assert.equal(signed.error, null);
+  assert.equal((await fetch(signed.data.signedUrl)).ok, true, 'owner signed URL plays private object');
+  assert.ok((await clientB.storage.from('recordings').createSignedUrl(audioPath, 300)).error, 'other user may not sign owner recording');
   const publicUrl = clientA.storage.from('recordings').getPublicUrl(audioPath).data.publicUrl;
   assert.equal((await fetch(publicUrl)).ok, false, 'private recording must not be publicly downloadable');
   console.log('PASS local Storage: owner M4A upload/download, cross-user and public access denied');
