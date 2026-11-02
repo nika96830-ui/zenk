@@ -5,7 +5,7 @@ import vm from 'node:vm';
 import ts from 'typescript';
 const source = readFileSync(new URL('../supabase/functions/process-meeting/index.ts', import.meta.url), 'utf8');
 const compiled = ts.transpileModule(source, { compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022 } }).outputText;
-function fixture({ allowed = true, quotaError = null, providerError = null } = {}) {
+function fixture({ allowed = true, quotaError = null, providerError = null, analysis = { summary: 'Synthetic summary', tasks: [{ title: 'Follow up' }] } } = {}) {
   let handler; const operations = []; const calls = [];
   const meeting = { id: 'meeting-1', user_id: 'user-1', audio_path: 'user-1/audio.m4a', title: 'Fixture' };
   const client = role => ({
@@ -21,14 +21,14 @@ function fixture({ allowed = true, quotaError = null, providerError = null } = {
     rpc: async (name, args) => { operations.push({ role, op: 'quota', name, args }); return { data: allowed, error: quotaError }; },
   });
   vm.runInNewContext(compiled, {
-    exports: {}, Request, Response, File, Blob, FormData, URL,
+    exports: {}, Request, Response, File, Blob, FormData, URL, AbortSignal,
     Deno: { env: { get: key => ({ SUPABASE_URL: 'https://fixture.invalid', SUPABASE_ANON_KEY: 'anon', SUPABASE_SERVICE_ROLE_KEY: 'service', OPENAI_API_KEY: 'fake-key' })[key] } },
     require: name => name.includes('/http/server') ? { serve: fn => { handler = fn; } } : { createClient: (_url, key) => client(key) },
     fetch: async (url, options) => {
       assert.ok(operations.some(x => x.op === 'quota' && x.role === 'service'), 'reserve quota before paid request');
       calls.push({ url, options });
       if (providerError) return new Response(JSON.stringify({ error: { code: providerError, message: 'SENSITIVE PROVIDER DETAIL' } }), { status: 429 });
-      return new Response(JSON.stringify(url.includes('transcriptions') ? { text: 'Synthetic transcript' } : { choices: [{ message: { content: JSON.stringify({ summary: 'Synthetic summary', tasks: [{ title: 'Follow up' }] }) } }] }));
+      return new Response(JSON.stringify(url.includes('transcriptions') ? { text: 'Synthetic transcript' } : { choices: [{ message: { content: JSON.stringify(analysis) } }] }));
     },
   });
   return { operations, calls, request: (body = {}) => handler(new Request('https://fixture.invalid/process', { method: 'POST', headers: { Authorization: 'Bearer synthetic', 'Content-Type': 'application/json' }, body: JSON.stringify({ meetingId: meeting.id, ...body }) })) };
@@ -53,4 +53,17 @@ test('provider details are sanitized while billing/config codes survive', async 
     assert.equal(f.calls.length, 1); assert.ok(!text.includes('SENSITIVE')); assert.ok(!text.includes('fake-key'));
     assert.equal(JSON.parse(text).error, code === 'unexpected_provider_error' ? 'Processing failed' : code);
   }
+});
+
+test('malformed model output never reaches a task insert', async () => {
+  for (const analysis of [null, [], { tasks: {} }, { title: 7 }, { tasks: [{ title: 'Task', assignee: {} }] }, { tasks: [{ title: 'Task', due_date: '2026-02-30' }] }, { tasks: Array(101).fill({ title: 'Task' }) }]) {
+    const f = fixture({ analysis });
+    assert.equal((await f.request()).status, 500);
+    assert.ok(!f.operations.some(x => x.op === 'insert'));
+  }
+});
+test('rejected recording substitution does not change meeting status', async () => {
+  const f = fixture();
+  await f.request({ audioPath: 'user-1/other.m4a' });
+  assert.ok(!f.operations.some(x => x.op === 'update'));
 });

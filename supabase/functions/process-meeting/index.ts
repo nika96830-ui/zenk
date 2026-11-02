@@ -51,7 +51,7 @@ function safeError(error: unknown): string {
 function corsHeaders(origin: string) { return { 'Access-Control-Allow-Origin': origin, 'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type', 'Access-Control-Allow-Methods': 'POST, OPTIONS', Vary: 'Origin' }; }
 
 serve(async (req) => {
-  let meetingId: string | undefined; let ownerId: string | undefined; let admin: SupabaseClient<Database> | undefined; let userClient: SupabaseClient<Database> | undefined; let headers: Record<string, string> = {};
+  let meetingId: string | undefined; let ownerId: string | undefined; let admin: SupabaseClient<Database> | undefined; let userClient: SupabaseClient<Database> | undefined; let headers: Record<string, string> = {}; let processingStarted = false;
   try {
     // CORS is not an authorization boundary. Every processing request still verifies the
     // Supabase JWT and checks meeting ownership before using the service-role client.
@@ -77,8 +77,9 @@ serve(async (req) => {
     const path = meeting.audio_path; if (typeof path !== 'string' || !path.startsWith(`${user.id}/`) || path.split('/').some(part => !/^[A-Za-z0-9_.-]+$/.test(part) || part === '.' || part === '..') || (audioPath !== undefined && audioPath !== path)) throw new Error('Recording path is invalid');
     const { error: startError } = await userClient.from('meetings').update({ status: 'processing', updated_at: new Date().toISOString() }).eq('id', meetingId).eq('user_id', user.id);
     if (startError) throw new Error('Failed to start processing');
+    processingStarted = true;
     const { data: fileData, error: downloadError } = await userClient.storage.from('recordings').download(path);
-    if (downloadError || !fileData) throw new Error('Failed to download recording'); if (fileData.size > MAX_AUDIO_BYTES) throw new Error('Recording exceeds the 25 MB limit');
+    if (downloadError || !fileData) throw new Error('Failed to download recording'); if (!fileData.size) throw new Error('Empty recording'); if (fileData.size > MAX_AUDIO_BYTES) throw new Error('Recording exceeds the 25 MB limit');
     const pathExtension = path.split('.').pop()?.toLowerCase() || ''; const declaredType = fileData.type.split(';')[0].toLowerCase(); const extensionFromType = EXTENSIONS_BY_MIME[declaredType];
     const fileFormat = extensionFromType ? { extension: extensionFromType, mime: declaredType === 'audio/x-wav' ? 'audio/wav' : declaredType } : MIME_TYPES[pathExtension];
     if (!fileFormat) throw new Error('Unsupported audio format');
@@ -87,10 +88,10 @@ serve(async (req) => {
     if (quotaError) throw new Error('Unable to check meeting quota'); if (!allowed) throw new Error('Monthly meeting quota exceeded');
     const transcriptionLanguage = ['ru', 'en', 'tr', 'az'].includes(language) ? language : 'ru'; const form = new FormData(); const filename = path.split('/').pop() || `recording.${fileFormat.extension}`;
     form.append('file', new File([fileData], filename, { type: fileFormat.mime })); form.append('model', 'whisper-1'); form.append('language', transcriptionLanguage);
-    const whisperResponse = await fetch('https://api.openai.com/v1/audio/transcriptions', { method: 'POST', headers: { Authorization: `Bearer ${openAiKey}` }, body: form });
-    const whisperJson = await whisperResponse.json(); if (!whisperResponse.ok) throw new Error(providerError(whisperJson)); const transcript = (whisperJson.text || '').trim(); if (!transcript) throw new Error('Empty transcript');
+    const whisperResponse = await fetch('https://api.openai.com/v1/audio/transcriptions', { method: 'POST', headers: { Authorization: `Bearer ${openAiKey}` }, body: form, signal: AbortSignal.timeout(120_000) });
+    const whisperJson = await whisperResponse.json(); if (!whisperResponse.ok) throw new Error(providerError(whisperJson)); const transcript = typeof whisperJson.text === 'string' ? whisperJson.text.trim() : ''; if (!transcript) throw new Error('Empty transcript');
     const analysisResponse = await fetch('https://api.openai.com/v1/chat/completions', {
-      method: 'POST', headers: { Authorization: `Bearer ${openAiKey}`, 'Content-Type': 'application/json' },
+      method: 'POST', signal: AbortSignal.timeout(60_000), headers: { Authorization: `Bearer ${openAiKey}`, 'Content-Type': 'application/json' },
       body: JSON.stringify({ model: 'gpt-4o-mini', temperature: 0.2, max_tokens: 1200, response_format: { type: 'json_object' }, messages: [
         { role: 'system', content: 'You are Zenk meeting assistant. Reply JSON only: ' + '{"title":"short meeting title","summary":"bullet-style minutes in the same language as the transcript","tasks":[{"title":"action item","assignee":null,"due_date":null}]}. ' + 'due_date ISO date if mentioned, else null. No invented facts.' },
         { role: 'user', content: transcript },
@@ -99,7 +100,21 @@ serve(async (req) => {
     const analysisJson = await analysisResponse.json(); if (!analysisResponse.ok) throw new Error(providerError(analysisJson));
     let analysis: { title?: string; summary?: string; tasks?: Array<{ title: string; assignee?: string | null; due_date?: string | null }> };
     try { analysis = JSON.parse(analysisJson.choices[0].message.content); } catch { throw new Error('Invalid GPT JSON'); }
-    const { error: updateError } = await userClient.from('meetings').update({ title: analysis.title || meeting.title || 'Meeting', transcript, summary: analysis.summary || transcript.slice(0, 500), status: 'completed', updated_at: new Date().toISOString() }).eq('id', meetingId).eq('user_id', user.id);
+    // JSON mode guarantees syntax only. Validate every field before changing stored data.
+    if (!analysis || typeof analysis !== 'object' || Array.isArray(analysis)
+      || (analysis.title !== undefined && typeof analysis.title !== 'string')
+      || (analysis.summary !== undefined && typeof analysis.summary !== 'string')
+      || (analysis.tasks !== undefined && !Array.isArray(analysis.tasks))) throw new Error('Invalid GPT schema');
+    if ((analysis.tasks?.length || 0) > 100) throw new Error('Too many tasks');
+    for (const task of analysis.tasks || []) {
+      if (!task || typeof task.title !== 'string'
+        || (task.assignee != null && typeof task.assignee !== 'string')
+        || (task.due_date != null && (typeof task.due_date !== 'string'
+          || !/^\d{4}-\d{2}-\d{2}$/.test(task.due_date)
+          || !Number.isFinite(Date.parse(task.due_date))
+          || new Date(task.due_date).toISOString().slice(0, 10) !== task.due_date))) throw new Error('Invalid GPT task');
+    }
+    const { error: updateError } = await userClient.from('meetings').update({ title: analysis.title?.trim().slice(0, 200) || meeting.title || 'Meeting', transcript, summary: analysis.summary?.slice(0, 20000) || transcript.slice(0, 500), status: 'completed', updated_at: new Date().toISOString() }).eq('id', meetingId).eq('user_id', user.id);
     if (updateError) throw new Error('Failed to save meeting analysis');
     // Build inserts from the owner-verified meeting row, not the optional request-body field.
     // The explicit Insert[] contract keeps meeting_id required at compile time.
@@ -109,7 +124,7 @@ serve(async (req) => {
         meeting_id: meeting.id,
         user_id: user.id,
         title: task.title.trim().slice(0, 500),
-        assignee: task.assignee || null,
+        assignee: task.assignee?.trim().slice(0, 200) || null,
         due_date: task.due_date || null,
         completed: false,
       }));
@@ -118,7 +133,7 @@ serve(async (req) => {
     if (readError || tasksReadError || !updated) throw new Error('Failed to read result');
     return new Response(JSON.stringify({ success: true, meeting: updated, tasks: tasks || [] }), { headers: { ...headers, 'Content-Type': 'application/json' } });
   } catch (error) {
-    if (userClient && meetingId && ownerId) await userClient.from('meetings').update({ status: 'failed', updated_at: new Date().toISOString() }).eq('id', meetingId).eq('user_id', ownerId);
+    if (processingStarted && userClient && meetingId && ownerId) await userClient.from('meetings').update({ status: 'failed', updated_at: new Date().toISOString() }).eq('id', meetingId).eq('user_id', ownerId);
     return new Response(JSON.stringify({ error: safeError(error) }), { status: 500, headers: { ...headers, 'Content-Type': 'application/json' } });
   }
 });
