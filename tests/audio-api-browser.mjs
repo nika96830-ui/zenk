@@ -47,10 +47,12 @@ try {
   }, { type, name, size });
   for (const type of ['audio/mp4', 'audio/mp4;codecs=mp4a.40.2', 'audio/x-m4a', 'audio/m4a', '', 'application/octet-stream']) {
     assert.equal(await processFile(type), 'Mock meeting');
-    assert.match(uploads.at(-1).path, /\/11111111-1111-4111-8111-111111111111\/\d+\.m4a$/);
+    assert.match(uploads.at(-1).path, /\/11111111-1111-4111-8111-111111111111\/[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}\.m4a$/);
     assert.ok(uploads.at(-1).type.includes('audio/mp4') || uploads.at(-1).body.includes('audio/mp4'));
   }
+  assert.equal(new Set(uploads.map(upload => upload.path)).size, uploads.length, 'uploads receive collision-resistant unique paths');
   const before = uploads.length;
+  assert.equal(await processFile('audio/mp4', 'empty.m4a', 0), 'UNSUPPORTED_AUDIO_TYPE');
   assert.equal(await processFile('text/plain'), 'UNSUPPORTED_AUDIO_TYPE');
   assert.equal(await processFile('', 'unknown.bin'), 'UNSUPPORTED_AUDIO_TYPE');
   assert.equal(await processFile('audio/mp4', 'large.m4a', 25 * 1024 * 1024 + 1), 'AUDIO_TOO_LARGE');
