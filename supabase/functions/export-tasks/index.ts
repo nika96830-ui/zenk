@@ -1,6 +1,19 @@
 import { serve } from 'https://deno.land/std@0.168.0/http/server.ts';
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2';
 
+// Hosted Supabase supplies modern key maps; prefer them when legacy keys are disabled.
+// An invalid configured map fails closed instead of silently using a legacy key.
+function runtimeKey(mapName: string, legacyName: string): string | undefined {
+  const raw = Deno.env.get(mapName);
+  if (raw) {
+    try {
+      const keys = JSON.parse(raw);
+      return typeof keys?.default === 'string' && keys.default ? keys.default : undefined;
+    } catch { return undefined; }
+  }
+  return Deno.env.get(legacyName);
+}
+
 // Keep the configured production origin while allowing this exact reviewed PR preview.
 const PR_PREVIEW_ORIGIN = 'https://zenk-git-fix-zenk-consolidated-security-zangui.vercel.app';
 const MAX_TASKS = 5000;
@@ -46,7 +59,7 @@ serve(async (req) => {
     const authHeader = req.headers.get('Authorization');
     if (!authHeader?.startsWith('Bearer ')) return json({ success: false, message: 'UNAUTHORIZED' }, 401, cors);
     const supabaseUrl = Deno.env.get('SUPABASE_URL');
-    const anonKey = Deno.env.get('SUPABASE_ANON_KEY');
+    const anonKey = runtimeKey('SUPABASE_PUBLISHABLE_KEYS', 'SUPABASE_ANON_KEY');
     if (!supabaseUrl || !anonKey) return json({ success: false, message: 'SERVER_CONFIGURATION_ERROR' }, 500, cors);
 
     const client = createClient(supabaseUrl, anonKey, {

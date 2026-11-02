@@ -30,6 +30,19 @@ type Database = {
   };
 };
 
+// Hosted Supabase supplies modern key maps; prefer them when legacy keys are disabled.
+// An invalid configured map fails closed instead of silently using a legacy key.
+function runtimeKey(mapName: string, legacyName: string): string | undefined {
+  const raw = Deno.env.get(mapName);
+  if (raw) {
+    try {
+      const keys = JSON.parse(raw);
+      return typeof keys?.default === 'string' && keys.default ? keys.default : undefined;
+    } catch { return undefined; }
+  }
+  return Deno.env.get(legacyName);
+}
+
 // Exact PR preview origin; do not accept wildcard Vercel subdomains.
 const PR_PREVIEW_ORIGIN = 'https://zenk-git-fix-zenk-consolidated-security-zangui.vercel.app';
 const MAX_AUDIO_BYTES = 25 * 1024 * 1024;
@@ -69,7 +82,7 @@ serve(async (req) => {
     if (!/^Bearer\s+\S+$/i.test(req.headers.get('Authorization') || '')) return new Response(JSON.stringify({ error: 'Unauthorized' }), { status: 401, headers });
     const body = await req.json(); meetingId = body.meetingId; const audioPath = body.audioPath; const language = body.language || 'ru';
     if (typeof meetingId !== 'string' || !meetingId) throw new Error('meetingId is required');
-    const supabaseUrl = Deno.env.get('SUPABASE_URL'), serviceKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY'), anonKey = Deno.env.get('SUPABASE_ANON_KEY'), openAiKey = Deno.env.get('OPENAI_API_KEY');
+    const supabaseUrl = Deno.env.get('SUPABASE_URL'), serviceKey = runtimeKey('SUPABASE_SECRET_KEYS', 'SUPABASE_SERVICE_ROLE_KEY'), anonKey = runtimeKey('SUPABASE_PUBLISHABLE_KEYS', 'SUPABASE_ANON_KEY'), openAiKey = Deno.env.get('OPENAI_API_KEY');
     if (!supabaseUrl || !serviceKey || !anonKey) throw new Error('Supabase configuration is missing'); if (!openAiKey) throw new Error('OPENAI_API_KEY is not configured');
     userClient = createClient<Database>(supabaseUrl, anonKey, { global: { headers: { Authorization: req.headers.get('Authorization') || '' } } });
     const { data: { user }, error: authError } = await userClient.auth.getUser();

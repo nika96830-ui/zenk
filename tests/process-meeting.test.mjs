@@ -5,7 +5,7 @@ import vm from 'node:vm';
 import ts from 'typescript';
 const source = readFileSync(new URL('../supabase/functions/process-meeting/index.ts', import.meta.url), 'utf8');
 const compiled = ts.transpileModule(source, { compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022 } }).outputText;
-function fixture({ allowed = true, quotaError = null, providerError = null, claimError = null, analysis = { summary: 'Synthetic summary', tasks: [{ title: 'Follow up' }] } } = {}) {
+function fixture({ allowed = true, quotaError = null, providerError = null, claimError = null, modernKeys = false, invalidMap = false, analysis = { summary: 'Synthetic summary', tasks: [{ title: 'Follow up' }] } } = {}) {
   let handler; let claimed = false; const operations = []; const calls = [];
   const meeting = { id: 'meeting-1', user_id: 'user-1', audio_path: 'user-1/audio.m4a', title: 'Fixture' };
   const client = role => ({
@@ -30,8 +30,8 @@ function fixture({ allowed = true, quotaError = null, providerError = null, clai
   });
   vm.runInNewContext(compiled, {
     exports: {}, Request, Response, File, Blob, FormData, URL, AbortSignal,
-    Deno: { env: { get: key => ({ SUPABASE_URL: 'https://fixture.invalid', SUPABASE_ANON_KEY: 'anon', SUPABASE_SERVICE_ROLE_KEY: 'service', OPENAI_API_KEY: 'fake-key' })[key] } },
-    require: name => name.includes('/http/server') ? { serve: fn => { handler = fn; } } : { createClient: (_url, key) => client(key) },
+    Deno: { env: { get: key => ({ SUPABASE_PUBLISHABLE_KEYS: invalidMap ? '{broken' : modernKeys ? JSON.stringify({ default: 'modern-public' }) : undefined, SUPABASE_SECRET_KEYS: modernKeys ? JSON.stringify({ default: 'modern-secret' }) : undefined, SUPABASE_URL: 'https://fixture.invalid', SUPABASE_ANON_KEY: 'anon', SUPABASE_SERVICE_ROLE_KEY: 'service', OPENAI_API_KEY: 'fake-key' })[key] } },
+    require: name => name.includes('/http/server') ? { serve: fn => { handler = fn; } } : { createClient: (_url, key) => client(key === 'modern-public' ? 'anon' : key === 'modern-secret' ? 'service' : key) },
     fetch: async (url, options) => {
       assert.ok(operations.some(x => x.op === 'claim' && x.accepted && x.role === 'service'), 'claim before paid request');
       assert.ok(operations.some(x => x.op === 'quota' && x.role === 'service'), 'reserve quota before paid request');
@@ -100,4 +100,16 @@ test('missing migration or unavailable claim RPC fails closed before any write o
   assert.equal((await f.request()).status, 500);
   assert.equal(f.calls.length, 0);
   assert.ok(!f.operations.some(x => ['insert', 'update'].includes(x.op)));
+});
+
+test('modern hosted key maps are supported without enabling legacy keys', async () => {
+  const f = fixture({ modernKeys: true });
+  assert.equal((await f.request()).status, 200);
+  assert.equal(f.calls.length, 2);
+  assert.ok(f.operations.filter(x => !['quota', 'claim'].includes(x.op)).every(x => x.role === 'anon'));
+});
+test('invalid modern key configuration fails closed before provider requests', async () => {
+  const f = fixture({ modernKeys: true, invalidMap: true });
+  assert.equal((await f.request()).status, 500);
+  assert.equal(f.calls.length, 0);
 });
