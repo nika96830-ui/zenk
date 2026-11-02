@@ -93,7 +93,7 @@ serve(async (req) => {
     if (!supabaseUrl) missingConfiguration.push('SUPABASE_URL');
     if (!anonKey) missingConfiguration.push('SUPABASE_PUBLISHABLE_KEYS');
     if (!serviceKey) missingConfiguration.push('SUPABASE_SECRET_KEYS');
-    if (missingConfiguration.length) throw new Error('Supabase configuration is missing');
+    if (!supabaseUrl || !serviceKey || !anonKey) throw new Error('Supabase configuration is missing');
     if (!openAiKey) throw new Error('OPENAI_API_KEY is not configured');
     userClient = createClient<Database>(supabaseUrl, anonKey, { global: { headers: { Authorization: req.headers.get('Authorization') || '' } } });
     const { data: { user }, error: authError } = await userClient.auth.getUser();
