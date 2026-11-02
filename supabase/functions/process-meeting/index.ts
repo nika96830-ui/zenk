@@ -74,7 +74,7 @@ function safeError(error: unknown): string {
 function corsHeaders(origin: string) { return { 'Access-Control-Allow-Origin': origin, 'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type', 'Access-Control-Allow-Methods': 'POST, OPTIONS', Vary: 'Origin' }; }
 
 serve(async (req) => {
-  let meetingId: string | undefined; let ownerId: string | undefined; let admin: SupabaseClient<Database> | undefined; let userClient: SupabaseClient<Database> | undefined; let headers: Record<string, string> = {}; let processingStarted = false; const missingConfiguration: string[] = [];
+  let meetingId: string | undefined; let ownerId: string | undefined; let admin: SupabaseClient<Database> | undefined; let userClient: SupabaseClient<Database> | undefined; let headers: Record<string, string> = {}; let processingStarted = false; const missingConfiguration: string[] = []; let stage = 'request'; let providerStatus: number | undefined;
   try {
     // CORS is not an authorization boundary. Every processing request still verifies the
     // Supabase JWT and checks meeting ownership before using the service-role client.
@@ -89,39 +89,65 @@ serve(async (req) => {
     if (!/^Bearer\s+\S+$/i.test(req.headers.get('Authorization') || '')) return new Response(JSON.stringify({ error: 'Unauthorized' }), { status: 401, headers });
     const body = await req.json(); meetingId = body.meetingId; const audioPath = body.audioPath; const language = body.language || 'ru';
     if (typeof meetingId !== 'string' || !meetingId) throw new Error('meetingId is required');
+    stage = 'configuration';
     const supabaseUrl = Deno.env.get('SUPABASE_URL'), serviceKey = runtimeKey('SUPABASE_SECRET_KEYS', 'SUPABASE_SERVICE_ROLE_KEY'), anonKey = runtimeKey('SUPABASE_PUBLISHABLE_KEYS', 'SUPABASE_ANON_KEY'), openAiKey = Deno.env.get('OPENAI_API_KEY');
     if (!supabaseUrl) missingConfiguration.push('SUPABASE_URL');
     if (!anonKey) missingConfiguration.push('SUPABASE_PUBLISHABLE_KEYS');
     if (!serviceKey) missingConfiguration.push('SUPABASE_SECRET_KEYS');
     if (!supabaseUrl || !serviceKey || !anonKey) throw new Error('Supabase configuration is missing');
     if (!openAiKey) throw new Error('OPENAI_API_KEY is not configured');
+    stage = 'authentication';
     userClient = createClient<Database>(supabaseUrl, anonKey, { global: { headers: { Authorization: req.headers.get('Authorization') || '' } } });
     const { data: { user }, error: authError } = await userClient.auth.getUser();
     if (authError || !user) return new Response(JSON.stringify({ error: 'Unauthorized' }), { status: 401, headers: { ...headers, 'Content-Type': 'application/json' } });
     ownerId = user.id; admin = createClient<Database>(supabaseUrl, serviceKey);
+    stage = 'meeting_lookup';
     const { data: meeting, error: meetingError } = await userClient.from('meetings').select('id, user_id, audio_path, title').eq('id', meetingId).eq('user_id', user.id).single();
     if (meetingError || !meeting) throw new Error('Meeting not found');
     const path = meeting.audio_path; if (typeof path !== 'string' || !path.startsWith(`${user.id}/`) || path.split('/').some(part => !/^[A-Za-z0-9_.-]+$/.test(part) || part === '.' || part === '..') || (audioPath !== undefined && audioPath !== path)) throw new Error('Recording path is invalid');
+    if (body.action !== undefined && body.action !== 'check-ai-configuration') throw new Error('Unsupported action');
+    // Authenticated owner-only metadata checks never download audio, reserve quota,
+    // claim processing, or call an inference endpoint. They do not prove billing.
+    if (body.action === 'check-ai-configuration') {
+      const modelAccess = await Promise.all(['whisper-1', 'gpt-4o-mini'].map(async (model) => {
+        try {
+          const response = await fetch(`https://api.openai.com/v1/models/${model}`, {
+            method: 'GET', headers: { Authorization: `Bearer ${openAiKey}` }, signal: AbortSignal.timeout(15_000),
+          });
+          const httpStatus = response.status;
+          await response.body?.cancel();
+          return { model, httpStatus };
+        } catch { return { model, httpStatus: null }; }
+      }));
+      return new Response(JSON.stringify({ modelAccess, modelMetadataAccessible: modelAccess.every(item => item.httpStatus === 200), inferenceRequested: false, billingVerified: false }), { headers: { ...headers, 'Content-Type': 'application/json' } });
+    }
+    stage = 'audio_download';
     const { data: fileData, error: downloadError } = await userClient.storage.from('recordings').download(path);
     if (downloadError || !fileData) throw new Error('Failed to download recording'); if (!fileData.size) throw new Error('Empty recording'); if (fileData.size > MAX_AUDIO_BYTES) throw new Error('Recording exceeds the 25 MB limit');
     const pathExtension = path.split('.').pop()?.toLowerCase() || ''; const declaredType = fileData.type.split(';')[0].toLowerCase(); const extensionFromType = EXTENSIONS_BY_MIME[declaredType];
     const fileFormat = extensionFromType ? { extension: extensionFromType, mime: declaredType === 'audio/x-wav' ? 'audio/wav' : declaredType } : MIME_TYPES[pathExtension];
     if (!fileFormat) throw new Error('Unsupported audio format');
     const periodStart = new Date(); periodStart.setUTCDate(1); periodStart.setUTCHours(0, 0, 0, 0);
+    stage = 'quota';
     const { data: allowed, error: quotaError } = await admin.rpc('reserve_meeting_usage', { p_user_id: user.id, p_meeting_id: meetingId, p_period_start: periodStart.toISOString().slice(0, 10), p_quota: MONTHLY_MEETING_QUOTA });
     if (quotaError) throw new Error('Unable to check meeting quota'); if (!allowed) throw new Error('Monthly meeting quota exceeded');
     // Commit a service-only, non-expiring admission record before any provider call.
     // A duplicate must not modify the winner's status or create another set of tasks.
+    stage = 'admission';
     const { data: claimed, error: claimError } = await admin.rpc('claim_meeting_processing', { p_user_id: user.id, p_meeting_id: meetingId, p_audio_path: path });
     if (claimError) throw new Error('Unable to claim meeting processing');
     if (claimed !== true) return new Response(JSON.stringify({ error: 'MEETING_ALREADY_CLAIMED' }), { status: 409, headers: { ...headers, 'Content-Type': 'application/json' } });
     processingStarted = true;
+    stage = 'start';
     const { error: startError } = await userClient.from('meetings').update({ status: 'processing', updated_at: new Date().toISOString() }).eq('id', meetingId).eq('user_id', user.id);
     if (startError) throw new Error('Failed to start processing');
     const transcriptionLanguage = ['ru', 'en', 'tr', 'az'].includes(language) ? language : 'ru'; const form = new FormData(); const filename = path.split('/').pop() || `recording.${fileFormat.extension}`;
     form.append('file', new File([fileData], filename, { type: fileFormat.mime })); form.append('model', 'whisper-1'); form.append('language', transcriptionLanguage);
+    stage = 'transcription';
     const whisperResponse = await fetch('https://api.openai.com/v1/audio/transcriptions', { method: 'POST', headers: { Authorization: `Bearer ${openAiKey}` }, body: form, signal: AbortSignal.timeout(120_000) });
+    providerStatus = whisperResponse.status;
     const whisperJson = await whisperResponse.json(); if (!whisperResponse.ok) throw new Error(providerError(whisperJson)); const transcript = typeof whisperJson.text === 'string' ? whisperJson.text.trim() : ''; if (!transcript) throw new Error('Empty transcript');
+    stage = 'analysis'; providerStatus = undefined;
     const analysisResponse = await fetch('https://api.openai.com/v1/chat/completions', {
       method: 'POST', signal: AbortSignal.timeout(60_000), headers: { Authorization: `Bearer ${openAiKey}`, 'Content-Type': 'application/json' },
       body: JSON.stringify({ model: 'gpt-4o-mini', temperature: 0.2, max_tokens: 1200, response_format: { type: 'json_object' }, messages: [
@@ -129,7 +155,9 @@ serve(async (req) => {
         { role: 'user', content: transcript },
       ] }),
     });
+    providerStatus = analysisResponse.status;
     const analysisJson = await analysisResponse.json(); if (!analysisResponse.ok) throw new Error(providerError(analysisJson));
+    stage = 'analysis_validation';
     let analysis: { title?: string; summary?: string; tasks?: Array<{ title: string; assignee?: string | null; due_date?: string | null }> };
     try { analysis = JSON.parse(analysisJson.choices[0].message.content); } catch { throw new Error('Invalid GPT JSON'); }
     // JSON mode guarantees syntax only. Validate every field before changing stored data.
@@ -146,6 +174,7 @@ serve(async (req) => {
           || !Number.isFinite(Date.parse(task.due_date))
           || new Date(task.due_date).toISOString().slice(0, 10) !== task.due_date))) throw new Error('Invalid GPT task');
     }
+    stage = 'meeting_save'; providerStatus = undefined;
     const { error: updateError } = await userClient.from('meetings').update({ title: analysis.title?.trim().slice(0, 200) || meeting.title || 'Meeting', transcript, summary: analysis.summary?.slice(0, 20000) || transcript.slice(0, 500), status: 'completed', updated_at: new Date().toISOString() }).eq('id', meetingId).eq('user_id', user.id);
     if (updateError) throw new Error('Failed to save meeting analysis');
     // Build inserts from the owner-verified meeting row, not the optional request-body field.
@@ -160,11 +189,15 @@ serve(async (req) => {
         due_date: task.due_date || null,
         completed: false,
       }));
+    stage = 'task_save';
     if (taskRows.length) { const { error: tasksError } = await userClient.from('tasks').insert(taskRows); if (tasksError) throw new Error('Failed to save meeting tasks'); }
+    stage = 'read_result';
     const { data: updated, error: readError } = await userClient.from('meetings').select('*').eq('id', meetingId).eq('user_id', user.id).single(); const { data: tasks, error: tasksReadError } = await userClient.from('tasks').select('*').eq('meeting_id', meetingId).eq('user_id', user.id);
     if (readError || tasksReadError || !updated) throw new Error('Failed to read result');
     return new Response(JSON.stringify({ success: true, meeting: updated, tasks: tasks || [] }), { headers: { ...headers, 'Content-Type': 'application/json' } });
   } catch (error) {
+    // Never log keys, provider response bodies, transcript text, or request payloads.
+    console.error('process-meeting failed', JSON.stringify({ stage, providerStatus, code: safeError(error) }));
     if (processingStarted && userClient && meetingId && ownerId) await userClient.from('meetings').update({ status: 'failed', updated_at: new Date().toISOString() }).eq('id', meetingId).eq('user_id', ownerId);
     return new Response(JSON.stringify({ error: safeError(error), ...(missingConfiguration.length ? { missingConfiguration } : {}) }), { status: 500, headers: { ...headers, 'Content-Type': 'application/json' } });
   }
