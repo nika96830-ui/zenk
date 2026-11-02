@@ -12,6 +12,10 @@ for (const name of ['process-meeting', 'export-tasks']) {
     vm.createContext(context); vm.runInContext(compiled, context);
     const key = () => vm.runInContext("runtimeKey('MODERN', 'LEGACY')", context);
     assert.equal(key(), 'modern-test-value');
+    env.MODERN = JSON.stringify({ 'zenk-server': 'named-test-value' });
+    assert.equal(key(), 'named-test-value');
+    env.MODERN = JSON.stringify({ first: 'test-one', second: 'test-two' });
+    assert.equal(key(), undefined, 'do not guess between named keys');
     delete env.MODERN;
     assert.equal(key(), 'legacy-test-value');
     for (const raw of ['{invalid', 'null', '{}', '{"default":7}', '{"default":""}']) {

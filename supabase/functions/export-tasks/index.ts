@@ -8,7 +8,14 @@ function runtimeKey(mapName: string, legacyName: string): string | undefined {
   if (raw) {
     try {
       const keys = JSON.parse(raw);
-      return typeof keys?.default === 'string' && keys.default ? keys.default : undefined;
+      if (!keys || typeof keys !== 'object' || Array.isArray(keys)) return undefined;
+      if (Object.prototype.hasOwnProperty.call(keys, 'default')) {
+        return typeof keys.default === 'string' && keys.default ? keys.default : undefined;
+      }
+      // A project may name its only key instead of calling it "default".
+      // Do not guess between multiple named keys or downgrade to disabled legacy keys.
+      const values = Object.values(keys);
+      return values.length === 1 && typeof values[0] === 'string' && values[0] ? values[0] : undefined;
     } catch { return undefined; }
   }
   return Deno.env.get(legacyName);

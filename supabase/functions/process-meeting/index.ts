@@ -37,7 +37,14 @@ function runtimeKey(mapName: string, legacyName: string): string | undefined {
   if (raw) {
     try {
       const keys = JSON.parse(raw);
-      return typeof keys?.default === 'string' && keys.default ? keys.default : undefined;
+      if (!keys || typeof keys !== 'object' || Array.isArray(keys)) return undefined;
+      if (Object.prototype.hasOwnProperty.call(keys, 'default')) {
+        return typeof keys.default === 'string' && keys.default ? keys.default : undefined;
+      }
+      // A project may name its only key instead of calling it "default".
+      // Do not guess between multiple named keys or downgrade to disabled legacy keys.
+      const values = Object.values(keys);
+      return values.length === 1 && typeof values[0] === 'string' && values[0] ? values[0] : undefined;
     } catch { return undefined; }
   }
   return Deno.env.get(legacyName);
@@ -67,7 +74,7 @@ function safeError(error: unknown): string {
 function corsHeaders(origin: string) { return { 'Access-Control-Allow-Origin': origin, 'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type', 'Access-Control-Allow-Methods': 'POST, OPTIONS', Vary: 'Origin' }; }
 
 serve(async (req) => {
-  let meetingId: string | undefined; let ownerId: string | undefined; let admin: SupabaseClient<Database> | undefined; let userClient: SupabaseClient<Database> | undefined; let headers: Record<string, string> = {}; let processingStarted = false;
+  let meetingId: string | undefined; let ownerId: string | undefined; let admin: SupabaseClient<Database> | undefined; let userClient: SupabaseClient<Database> | undefined; let headers: Record<string, string> = {}; let processingStarted = false; const missingConfiguration: string[] = [];
   try {
     // CORS is not an authorization boundary. Every processing request still verifies the
     // Supabase JWT and checks meeting ownership before using the service-role client.
@@ -83,7 +90,11 @@ serve(async (req) => {
     const body = await req.json(); meetingId = body.meetingId; const audioPath = body.audioPath; const language = body.language || 'ru';
     if (typeof meetingId !== 'string' || !meetingId) throw new Error('meetingId is required');
     const supabaseUrl = Deno.env.get('SUPABASE_URL'), serviceKey = runtimeKey('SUPABASE_SECRET_KEYS', 'SUPABASE_SERVICE_ROLE_KEY'), anonKey = runtimeKey('SUPABASE_PUBLISHABLE_KEYS', 'SUPABASE_ANON_KEY'), openAiKey = Deno.env.get('OPENAI_API_KEY');
-    if (!supabaseUrl || !serviceKey || !anonKey) throw new Error('Supabase configuration is missing'); if (!openAiKey) throw new Error('OPENAI_API_KEY is not configured');
+    if (!supabaseUrl) missingConfiguration.push('SUPABASE_URL');
+    if (!anonKey) missingConfiguration.push('SUPABASE_PUBLISHABLE_KEYS');
+    if (!serviceKey) missingConfiguration.push('SUPABASE_SECRET_KEYS');
+    if (missingConfiguration.length) throw new Error('Supabase configuration is missing');
+    if (!openAiKey) throw new Error('OPENAI_API_KEY is not configured');
     userClient = createClient<Database>(supabaseUrl, anonKey, { global: { headers: { Authorization: req.headers.get('Authorization') || '' } } });
     const { data: { user }, error: authError } = await userClient.auth.getUser();
     if (authError || !user) return new Response(JSON.stringify({ error: 'Unauthorized' }), { status: 401, headers: { ...headers, 'Content-Type': 'application/json' } });
@@ -155,6 +166,6 @@ serve(async (req) => {
     return new Response(JSON.stringify({ success: true, meeting: updated, tasks: tasks || [] }), { headers: { ...headers, 'Content-Type': 'application/json' } });
   } catch (error) {
     if (processingStarted && userClient && meetingId && ownerId) await userClient.from('meetings').update({ status: 'failed', updated_at: new Date().toISOString() }).eq('id', meetingId).eq('user_id', ownerId);
-    return new Response(JSON.stringify({ error: safeError(error) }), { status: 500, headers: { ...headers, 'Content-Type': 'application/json' } });
+    return new Response(JSON.stringify({ error: safeError(error), ...(missingConfiguration.length ? { missingConfiguration } : {}) }), { status: 500, headers: { ...headers, 'Content-Type': 'application/json' } });
   }
 });
