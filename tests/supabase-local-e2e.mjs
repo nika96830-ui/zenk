@@ -135,6 +135,30 @@ try {
   });
   assert.ok(clientReservation.error, 'authenticated clients must not call service-only usage reservation');
   console.log('PASS local Supabase quota RPC: service role allowed; client role denied; quota enforced');
+
+  assert.equal((await clientA.from('meetings').update({ audio_path: audioPath, status: 'processing' }).eq('id', meetingA.id)).error, null);
+  const claimArgs = { p_user_id: userA.id, p_meeting_id: meetingA.id, p_audio_path: audioPath };
+  assert.ok((await clientA.rpc('claim_meeting_processing', claimArgs)).error, 'owner cannot call service-only claim');
+  assert.ok((await clientB.rpc('claim_meeting_processing', claimArgs)).error, 'other user cannot claim');
+  assert.ok((await createClient(url, anonKey, authOptions).rpc('claim_meeting_processing', claimArgs)).error, 'anon cannot claim');
+  const wrongOwner = await admin.rpc('claim_meeting_processing', { ...claimArgs, p_user_id: userB.id });
+  assert.equal(wrongOwner.error, null);
+  assert.equal(wrongOwner.data, false);
+  const wrongPath = await admin.rpc('claim_meeting_processing', { ...claimArgs, p_audio_path: 'wrong.m4a' });
+  assert.equal(wrongPath.error, null);
+  assert.equal(wrongPath.data, false);
+  // Real concurrent PostgREST transactions against local Postgres, no provider requests.
+  const claims = await Promise.all(Array.from({ length: 16 }, () => admin.rpc('claim_meeting_processing', claimArgs)));
+  claims.forEach(result => assert.equal(result.error, null, result.error?.message));
+  assert.equal(claims.filter(result => result.data === true).length, 1, 'exactly one database transaction admitted');
+  assert.equal(claims.filter(result => result.data === false).length, 15);
+  for (const status of ['completed', 'failed', 'processing']) {
+    assert.equal((await clientA.from('meetings').update({ status }).eq('id', meetingA.id)).error, null);
+    const replay = await admin.rpc('claim_meeting_processing', claimArgs);
+    assert.equal(replay.error, null);
+    assert.equal(replay.data, false, 'status changes cannot reopen processing');
+  }
+  console.log('PASS durable processing claim: 16 simultaneous requests admit one; owner/anon denied; replays stay sealed');
 } finally {
   if (createdAudioPaths.length) {
     const { error } = await admin.storage.from('recordings').remove(createdAudioPaths);

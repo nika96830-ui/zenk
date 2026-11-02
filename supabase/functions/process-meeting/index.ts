@@ -22,6 +22,7 @@ type Database = {
     };
     Views: Record<string, never>;
     Functions: {
+      claim_meeting_processing: { Args: { p_user_id: string; p_meeting_id: string; p_audio_path: string }; Returns: boolean };
       reserve_meeting_usage: { Args: { p_user_id: string; p_meeting_id: string; p_period_start: string; p_quota: number }; Returns: boolean };
     };
     Enums: Record<string, never>;
@@ -75,9 +76,6 @@ serve(async (req) => {
     const { data: meeting, error: meetingError } = await userClient.from('meetings').select('id, user_id, audio_path, title').eq('id', meetingId).eq('user_id', user.id).single();
     if (meetingError || !meeting) throw new Error('Meeting not found');
     const path = meeting.audio_path; if (typeof path !== 'string' || !path.startsWith(`${user.id}/`) || path.split('/').some(part => !/^[A-Za-z0-9_.-]+$/.test(part) || part === '.' || part === '..') || (audioPath !== undefined && audioPath !== path)) throw new Error('Recording path is invalid');
-    const { error: startError } = await userClient.from('meetings').update({ status: 'processing', updated_at: new Date().toISOString() }).eq('id', meetingId).eq('user_id', user.id);
-    if (startError) throw new Error('Failed to start processing');
-    processingStarted = true;
     const { data: fileData, error: downloadError } = await userClient.storage.from('recordings').download(path);
     if (downloadError || !fileData) throw new Error('Failed to download recording'); if (!fileData.size) throw new Error('Empty recording'); if (fileData.size > MAX_AUDIO_BYTES) throw new Error('Recording exceeds the 25 MB limit');
     const pathExtension = path.split('.').pop()?.toLowerCase() || ''; const declaredType = fileData.type.split(';')[0].toLowerCase(); const extensionFromType = EXTENSIONS_BY_MIME[declaredType];
@@ -86,6 +84,14 @@ serve(async (req) => {
     const periodStart = new Date(); periodStart.setUTCDate(1); periodStart.setUTCHours(0, 0, 0, 0);
     const { data: allowed, error: quotaError } = await admin.rpc('reserve_meeting_usage', { p_user_id: user.id, p_meeting_id: meetingId, p_period_start: periodStart.toISOString().slice(0, 10), p_quota: MONTHLY_MEETING_QUOTA });
     if (quotaError) throw new Error('Unable to check meeting quota'); if (!allowed) throw new Error('Monthly meeting quota exceeded');
+    // Commit a service-only, non-expiring admission record before any provider call.
+    // A duplicate must not modify the winner's status or create another set of tasks.
+    const { data: claimed, error: claimError } = await admin.rpc('claim_meeting_processing', { p_user_id: user.id, p_meeting_id: meetingId, p_audio_path: path });
+    if (claimError) throw new Error('Unable to claim meeting processing');
+    if (claimed !== true) return new Response(JSON.stringify({ error: 'MEETING_ALREADY_CLAIMED' }), { status: 409, headers: { ...headers, 'Content-Type': 'application/json' } });
+    processingStarted = true;
+    const { error: startError } = await userClient.from('meetings').update({ status: 'processing', updated_at: new Date().toISOString() }).eq('id', meetingId).eq('user_id', user.id);
+    if (startError) throw new Error('Failed to start processing');
     const transcriptionLanguage = ['ru', 'en', 'tr', 'az'].includes(language) ? language : 'ru'; const form = new FormData(); const filename = path.split('/').pop() || `recording.${fileFormat.extension}`;
     form.append('file', new File([fileData], filename, { type: fileFormat.mime })); form.append('model', 'whisper-1'); form.append('language', transcriptionLanguage);
     const whisperResponse = await fetch('https://api.openai.com/v1/audio/transcriptions', { method: 'POST', headers: { Authorization: `Bearer ${openAiKey}` }, body: form, signal: AbortSignal.timeout(120_000) });

@@ -10,3 +10,5 @@ ios/
 .DS_Store
 .idea
 .vscode/*
+
+supabase/.temp/

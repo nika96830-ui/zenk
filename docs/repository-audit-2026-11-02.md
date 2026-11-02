@@ -11,7 +11,7 @@ Additional fixes: reject invalid AI JSON field types, impossible dates and exces
 
 Vercel commit statuses confirm successful existing deployments for main and #15. GitHub deployments listing returns 403 (integration permission); no Vercel connector is available. Preview URLs can be inspected via Vercel bot PR comments. No production deployment, hosted migration/function change, paid inference, data deletion or PR merge is authorized or performed.
 
-Outstanding launch gates: separately approved hosted migration/function deployment, verification of actual OpenAI credentials and balance, approved bounded live AI acceptance, physical iPhone microphone testing, and prevention of concurrent repeated AI processing (quota reservation deduplicates quota, not provider executions). Browser mock tests do not establish live provider or physical-device readiness.
+Outstanding launch gates: separately approved hosted migration/function deployment, verification of actual OpenAI credentials and balance, approved bounded live AI acceptance, physical iPhone microphone testing, and deployment of the new durable processing admission migration with the guarded Edge Function (see docs/processing-admission.md). Browser mock tests do not establish live provider or physical-device readiness.
 
 ## Current validation and preview
 

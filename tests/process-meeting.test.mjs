@@ -5,8 +5,8 @@ import vm from 'node:vm';
 import ts from 'typescript';
 const source = readFileSync(new URL('../supabase/functions/process-meeting/index.ts', import.meta.url), 'utf8');
 const compiled = ts.transpileModule(source, { compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022 } }).outputText;
-function fixture({ allowed = true, quotaError = null, providerError = null, analysis = { summary: 'Synthetic summary', tasks: [{ title: 'Follow up' }] } } = {}) {
-  let handler; const operations = []; const calls = [];
+function fixture({ allowed = true, quotaError = null, providerError = null, claimError = null, analysis = { summary: 'Synthetic summary', tasks: [{ title: 'Follow up' }] } } = {}) {
+  let handler; let claimed = false; const operations = []; const calls = [];
   const meeting = { id: 'meeting-1', user_id: 'user-1', audio_path: 'user-1/audio.m4a', title: 'Fixture' };
   const client = role => ({
     auth: { getUser: async () => ({ data: { user: { id: 'user-1' } }, error: null }) },
@@ -18,13 +18,22 @@ function fixture({ allowed = true, quotaError = null, providerError = null, anal
       }; return query;
     },
     storage: { from: () => ({ download: async () => { operations.push({ role, op: 'download' }); return { data: new Blob(['synthetic'], { type: 'audio/mp4' }), error: null }; } }) },
-    rpc: async (name, args) => { operations.push({ role, op: 'quota', name, args }); return { data: allowed, error: quotaError }; },
+    rpc: async (name, args) => {
+      if (name === 'claim_meeting_processing') {
+        const accepted = !claimed && !claimError;
+        if (accepted) claimed = true;
+        operations.push({ role, op: 'claim', args, accepted });
+        return { data: accepted, error: claimError };
+      }
+      operations.push({ role, op: 'quota', name, args }); return { data: allowed, error: quotaError };
+    },
   });
   vm.runInNewContext(compiled, {
     exports: {}, Request, Response, File, Blob, FormData, URL, AbortSignal,
     Deno: { env: { get: key => ({ SUPABASE_URL: 'https://fixture.invalid', SUPABASE_ANON_KEY: 'anon', SUPABASE_SERVICE_ROLE_KEY: 'service', OPENAI_API_KEY: 'fake-key' })[key] } },
     require: name => name.includes('/http/server') ? { serve: fn => { handler = fn; } } : { createClient: (_url, key) => client(key) },
     fetch: async (url, options) => {
+      assert.ok(operations.some(x => x.op === 'claim' && x.accepted && x.role === 'service'), 'claim before paid request');
       assert.ok(operations.some(x => x.op === 'quota' && x.role === 'service'), 'reserve quota before paid request');
       calls.push({ url, options });
       if (providerError) return new Response(JSON.stringify({ error: { code: providerError, message: 'SENSITIVE PROVIDER DETAIL' } }), { status: 429 });
@@ -43,7 +52,7 @@ test('caller cannot substitute another recording, even inside own folder', async
 });
 test('mocked complete pipeline reserves service quota but uses caller RLS for all rows/audio', async () => {
   const f = fixture(); const response = await f.request(); assert.equal(response.status, 200); assert.equal(f.calls.length, 2);
-  assert.ok(f.operations.filter(x => x.op !== 'quota').every(x => x.role === 'anon'));
+  assert.ok(f.operations.filter(x => !['quota', 'claim'].includes(x.op)).every(x => x.role === 'anon'));
   assert.equal(f.operations.find(x => x.op === 'quota').args.p_quota, 5);
   assert.equal(JSON.parse(f.calls[1].options.body).max_tokens, 1200);
 });
@@ -66,4 +75,29 @@ test('rejected recording substitution does not change meeting status', async () 
   const f = fixture();
   await f.request({ audioPath: 'user-1/other.m4a' });
   assert.ok(!f.operations.some(x => x.op === 'update'));
+});
+
+test('parallel and completed replays admit exactly one provider pipeline and one task insert', async () => {
+  const f = fixture();
+  const responses = await Promise.all(Array.from({ length: 12 }, () => f.request()));
+  assert.equal(responses.filter(r => r.status === 200).length, 1);
+  assert.equal(responses.filter(r => r.status === 409).length, 11);
+  assert.equal(f.calls.length, 2);
+  assert.equal(f.operations.filter(x => x.op === 'insert').length, 1);
+  const writes = f.operations.filter(x => x.op === 'update').length;
+  assert.equal((await f.request()).status, 409);
+  assert.equal(f.calls.length, 2);
+  assert.equal(f.operations.filter(x => x.op === 'update').length, writes);
+});
+test('provider failure keeps admission sealed on retry', async () => {
+  const f = fixture({ providerError: 'insufficient_quota' });
+  assert.equal((await f.request()).status, 500);
+  assert.equal((await f.request()).status, 409);
+  assert.equal(f.calls.length, 1);
+});
+test('missing migration or unavailable claim RPC fails closed before any write or provider call', async () => {
+  const f = fixture({ claimError: { message: 'missing RPC' } });
+  assert.equal((await f.request()).status, 500);
+  assert.equal(f.calls.length, 0);
+  assert.ok(!f.operations.some(x => ['insert', 'update'].includes(x.op)));
 });

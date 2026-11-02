@@ -1,0 +1,105 @@
+<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline'; media-src blob:; connect-src 'none'; form-action 'none'; base-uri 'none'">
+<title>ZENK — проверка аудио на iPhone</title>
+<style>body{font:17px system-ui;max-width:640px;margin:24px auto;padding:0 16px;color:#163c30;background:#f7f7f0}button,input{font:inherit;margin:8px 4px;padding:12px}audio{width:100%;margin:16px 0}pre{white-space:pre-wrap;overflow-wrap:anywhere}button:disabled{opacity:.5}</style>
+</head>
+<body>
+<h1>Проверка аудио на iPhone</h1>
+<p>Запись остаётся в памяти этой вкладки. Загрузки на сервер, входа в аккаунт и AI-запросов нет. Сетевые запросы запрещены политикой страницы.</p>
+<p>Нажмите «Записать», разрешите микрофон, скажите несколько слов. Проверьте паузу, продолжение, остановку и воспроизведение.</p>
+<button id="start">Записать</button><button id="pause" disabled>Пауза</button><button id="stop" disabled>Остановить</button>
+<p><label>Локальный файл из «Диктофона» (до 25 МБ): <input id="file" type="file" accept="audio/*,.m4a,.mp3,.wav,.webm,.ogg,.aac"></label></p>
+<audio id="player" controls playsinline></audio>
+<button id="clear">Очистить локальную запись</button>
+<p id="status" role="status">Готово. Используйте только эту страницу для бесплатной проверки.</p>
+<pre id="report"></pre>
+<script>
+'use strict';
+const $ = id => document.getElementById(id);
+let recorder = null, stream = null, chunks = [], objectUrl = null, generation = 0, starting = false;
+const limit = 25 * 1024 * 1024;
+const log = message => { $('report').textContent += message + '\n'; };
+const status = message => { $('status').textContent = message; };
+log(navigator.userAgent);
+log('HTTPS: ' + window.isSecureContext + '; MediaRecorder: ' + (typeof MediaRecorder !== 'undefined'));
+function release() { stream?.getTracks().forEach(track => track.stop()); stream = null; }
+function controls(active) {
+  $('start').disabled = active || starting;
+  $('file').disabled = active || starting;
+  $('pause').disabled = !active;
+  $('stop').disabled = !active;
+}
+function clearAudio() {
+  $('player').pause(); $('player').removeAttribute('src'); $('player').load();
+  if (objectUrl) URL.revokeObjectURL(objectUrl);
+  objectUrl = null;
+}
+function showAudio(blob) {
+  clearAudio();
+  if (!blob.size || blob.size > limit) { status('Пустая запись или размер больше 25 МБ.'); return; }
+  objectUrl = URL.createObjectURL(blob); $('player').src = objectUrl;
+  log('Готово: ' + blob.type + '; байт: ' + blob.size);
+  status('Запись готова. Нажмите Play в плеере; звук никуда не отправляется.');
+}
+function stop() {
+  if (!recorder || recorder.state === 'inactive') return;
+  try { recorder.stop(); } catch { release(); recorder = null; chunks = []; controls(false); status('Ошибка остановки записи. Микрофон освобождён.'); }
+  release(); controls(false);
+}
+$('start').onclick = async () => {
+  if (starting || recorder?.state === 'recording' || recorder?.state === 'paused') return;
+  const ticket = ++generation;
+  starting = true; controls(false); clearAudio();
+  try {
+    if (!navigator.mediaDevices?.getUserMedia || typeof MediaRecorder === 'undefined') throw new Error('Микрофон или MediaRecorder недоступен. Откройте страницу в Safari по HTTPS.');
+    const nextStream = await navigator.mediaDevices.getUserMedia({ audio: true });
+    if (ticket !== generation || document.hidden) { nextStream.getTracks().forEach(track => track.stop()); return; }
+    stream = nextStream;
+    const mimeType = ['audio/mp4', 'audio/webm;codecs=opus', 'audio/webm', 'audio/ogg'].find(type => MediaRecorder.isTypeSupported(type));
+    recorder = new MediaRecorder(stream, mimeType ? { mimeType } : undefined);
+    const current = recorder; chunks = []; let bytes = 0;
+    current.ondataavailable = event => {
+      if (ticket !== generation) return;
+      if (event.data.size) chunks.push(event.data);
+      bytes += event.data.size;
+      if (bytes >= limit) stop();
+    };
+    current.onstop = () => {
+      if (ticket !== generation) return;
+      showAudio(new Blob(chunks, { type: current.mimeType })); chunks = [];
+      release(); recorder = null; controls(false);
+    };
+    current.onerror = () => { generation++; release(); recorder = null; chunks = []; controls(false); status('Ошибка записи. Микрофон освобождён.'); };
+    current.start(1000); log('Начата запись: ' + current.mimeType);
+    status('Идёт локальная запись.'); controls(true);
+  } catch (error) { release(); recorder = null; status(error.name === 'NotAllowedError' ? 'Доступ к микрофону запрещён. Разрешите его в настройках Safari и повторите.' : error.message); }
+  finally { if (ticket === generation) { starting = false; controls(recorder?.state === 'recording' || recorder?.state === 'paused'); } }
+};
+$('pause').onclick = () => {
+  if (!recorder) return;
+  try {
+    if (recorder.state === 'recording') { recorder.pause(); $('pause').textContent = 'Продолжить'; status('Пауза.'); }
+    else if (recorder.state === 'paused') { recorder.resume(); $('pause').textContent = 'Пауза'; status('Идёт локальная запись.'); }
+  } catch { stop(); }
+};
+$('stop').onclick = () => { $('pause').textContent = 'Пауза'; stop(); };
+$('file').onchange = event => {
+  const file = event.target.files[0]; event.target.value = '';
+  if (file) showAudio(file);
+};
+$('clear').onclick = () => {
+  generation++; starting = false;
+  if (recorder && recorder.state !== 'inactive') { try { recorder.stop(); } catch {} }
+  release(); recorder = null; chunks = []; clearAudio(); controls(false); $('pause').textContent = 'Пауза';
+  status('Локальная запись очищена.');
+};
+document.addEventListener('visibilitychange', () => { if (document.hidden) { generation++; starting = false; if (recorder?.state !== 'inactive') { try { recorder?.stop(); } catch {} } release(); recorder = null; chunks = []; controls(false); status('Запись прервана при уходе со страницы. Повторите проверку.'); } });
+window.addEventListener('pagehide', () => { generation++; release(); clearAudio(); });
+$('player').onerror = () => status('Safari не воспроизводит этот файл. Зафиксируйте формат и версию iOS.');
+</script>
+</body>
+</html>

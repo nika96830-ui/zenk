@@ -68,7 +68,9 @@ try {
     failure = { status, body };
     assert.equal(await processFile('audio/mp4'), expected);
   }
-  assert.equal(failedUpdates, 5);
+  failure = { status: 409, body: { error: 'MEETING_ALREADY_CLAIMED' } };
+  assert.equal(await processFile('audio/mp4'), 'MEETING_ALREADY_CLAIMED');
+  assert.equal(failedUpdates, 5, 'duplicate request must not mark the winner failed');
   console.log(`PASS ${engine}: real FunctionsHttpError parsing, safe messages and failed status persistence`);
   // Exercise the browser's actual encoder and decoder with a generated tone.
   // This is not a microphone, speech-recognition, Safari-device or physical-iPhone test.

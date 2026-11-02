@@ -49,6 +49,7 @@ export function RecordPage({ onMeetingCreated }: { onMeetingCreated: (meeting: M
         UPLOAD_FAILED: t.record.uploadFailed,
         SAVE_FAILED: t.record.saveFailed,
         PROCESS_FAILED: t.record.processFailed,
+        MEETING_ALREADY_CLAIMED: t.record.alreadyClaimed,
         MEETING_QUOTA_EXCEEDED: t.record.quotaExceeded,
         AI_INSUFFICIENT_BALANCE: t.record.insufficientBalance,
         AI_CONFIGURATION_ERROR: t.record.aiConfiguration,
