@@ -1,6 +1,8 @@
 import { serve } from 'https://deno.land/std@0.168.0/http/server.ts';
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2';
 
+// Keep the configured production origin while allowing this exact reviewed PR preview.
+const PR_PREVIEW_ORIGIN = 'https://zenk-git-fix-zenk-consolidated-security-zangui.vercel.app';
 const MAX_TASKS = 5000;
 const MAX_EXPORT_BYTES = 1_000_000;
 
@@ -34,8 +36,8 @@ serve(async (req) => {
     const configuredOrigin = Deno.env.get('ALLOWED_ORIGIN');
     const requestOrigin = req.headers.get('Origin');
     const origin = configuredOrigin ? new URL(configuredOrigin).origin : '*';
-    cors = corsHeaders(origin);
-    if (configuredOrigin && requestOrigin && requestOrigin !== origin) {
+    cors = corsHeaders(requestOrigin === PR_PREVIEW_ORIGIN ? PR_PREVIEW_ORIGIN : origin);
+    if (configuredOrigin && requestOrigin && requestOrigin !== origin && requestOrigin !== PR_PREVIEW_ORIGIN) {
       return json({ success: false, message: 'ORIGIN_NOT_ALLOWED' }, 403, cors);
     }
     if (req.method === 'OPTIONS') return new Response('ok', { headers: cors });

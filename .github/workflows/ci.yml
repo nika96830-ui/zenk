@@ -33,7 +33,7 @@ jobs:
           ZANG_BROWSER=webkit node tests/audio-api-browser.mjs
           node tests/iphone-qa-browser.mjs
           ZANG_BROWSER=webkit node tests/iphone-qa-browser.mjs
-      - run: node --test tests/regressions.test.mjs tests/process-meeting.test.mjs
+      - run: node --test tests/regressions.test.mjs tests/process-meeting.test.mjs tests/cors.test.mjs
       - name: Set up Deno
         uses: denoland/setup-deno@v2
         with:

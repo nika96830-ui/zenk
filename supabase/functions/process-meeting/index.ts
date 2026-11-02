@@ -30,6 +30,8 @@ type Database = {
   };
 };
 
+// Exact PR preview origin; do not accept wildcard Vercel subdomains.
+const PR_PREVIEW_ORIGIN = 'https://zenk-git-fix-zenk-consolidated-security-zangui.vercel.app';
 const MAX_AUDIO_BYTES = 25 * 1024 * 1024;
 const MIME_TYPES: Record<string, { extension: string; mime: string }> = {
   webm: { extension: 'webm', mime: 'audio/webm' }, m4a: { extension: 'm4a', mime: 'audio/mp4' }, mp4: { extension: 'mp4', mime: 'audio/mp4' },
@@ -59,9 +61,9 @@ serve(async (req) => {
     // Keep ALLOWED_ORIGIN optional because the documented setup does not require this secret.
     const configured = Deno.env.get('ALLOWED_ORIGIN');
     const origin = configured ? new URL(configured).origin : '*';
-    headers = corsHeaders(origin);
     const requestOrigin = req.headers.get('Origin');
-    if (configured && requestOrigin && requestOrigin !== origin) return new Response('Origin not allowed', { status: 403, headers });
+    headers = corsHeaders(requestOrigin === PR_PREVIEW_ORIGIN ? PR_PREVIEW_ORIGIN : origin);
+    if (configured && requestOrigin && requestOrigin !== origin && requestOrigin !== PR_PREVIEW_ORIGIN) return new Response('Origin not allowed', { status: 403, headers });
     if (req.method === 'OPTIONS') return new Response('ok', { headers });
     if (req.method !== 'POST') return new Response('Method not allowed', { status: 405, headers });
     if (!/^Bearer\s+\S+$/i.test(req.headers.get('Authorization') || '')) return new Response(JSON.stringify({ error: 'Unauthorized' }), { status: 401, headers });
