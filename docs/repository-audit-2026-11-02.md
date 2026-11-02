@@ -12,3 +12,7 @@ Additional fixes: reject invalid AI JSON field types, impossible dates and exces
 Vercel commit statuses confirm successful existing deployments for main and #15. GitHub deployments listing returns 403 (integration permission); no Vercel connector is available. Preview URLs can be inspected via Vercel bot PR comments. No production deployment, hosted migration/function change, paid inference, data deletion or PR merge is authorized or performed.
 
 Outstanding launch gates: separately approved hosted migration/function deployment, verification of actual OpenAI credentials and balance, approved bounded live AI acceptance, physical iPhone microphone testing, and prevention of concurrent repeated AI processing (quota reservation deduplicates quota, not provider executions). Browser mock tests do not establish live provider or physical-device readiness.
+
+## Current validation and preview
+
+Local TypeScript, Vite build and 21 regression/pipeline tests passed. New PR #18 runs all four CI jobs. Vercel initially blocked preview because the inherited local commit email did not resolve to a GitHub account. The next commit uses the connected account's GitHub noreply identity; no Vercel team/security settings are changed. Existing #15 preview: https://zenk-git-fix-zang-final-qa-zangui.vercel.app (older branch, not this PR).
