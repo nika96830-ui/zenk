@@ -53,6 +53,7 @@ export function RecordPage({ onMeetingCreated }: { onMeetingCreated: (meeting: M
         MEETING_QUOTA_EXCEEDED: t.record.quotaExceeded,
         AI_INSUFFICIENT_BALANCE: t.record.insufficientBalance,
         AI_CONFIGURATION_ERROR: t.record.aiConfiguration,
+        AI_RATE_LIMITED: t.auth.rateLimit,
         AUTH_REQUIRED: t.record.authRequired,
       };
       setStatusText(localized[code] || t.record.error);

@@ -32,7 +32,8 @@ export async function processRecording(audioBlob: Blob,title='New meeting',langu
     await supabase.from('meetings').update({status:'failed'}).eq('id',meetingRow.id).eq('user_id',user.id);
     if (/monthly meeting quota exceeded/i.test(providerMessage)) throw new Error('MEETING_QUOTA_EXCEEDED');
     if (/insufficient_quota|billing|credit balance|insufficient balance/i.test(providerMessage)) throw new Error('AI_INSUFFICIENT_BALANCE');
-    if (/openai_api_key is not configured|invalid_api_key|supabase configuration is missing/i.test(providerMessage)) throw new Error('AI_CONFIGURATION_ERROR');
+    if (/openai_api_key is not configured|invalid_api_key|supabase configuration is missing|OPENAI_ACCESS_DENIED|OPENAI_MODEL_UNAVAILABLE/i.test(providerMessage)) throw new Error('AI_CONFIGURATION_ERROR');
+    if (providerMessage === 'OPENAI_RATE_LIMITED') throw new Error('AI_RATE_LIMITED');
     throw new Error('PROCESS_FAILED');
   }
   return {meeting:mapMeeting(data?.meeting??meetingRow,data?.tasks??[])};

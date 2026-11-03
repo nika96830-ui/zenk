@@ -5,16 +5,29 @@ import vm from 'node:vm';
 import ts from 'typescript';
 const source = readFileSync(new URL('../supabase/functions/process-meeting/index.ts', import.meta.url), 'utf8');
 const compiled = ts.transpileModule(source, { compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022 } }).outputText;
-function fixture({ allowed = true, quotaError = null, providerError = null, claimError = null, modernKeys = false, invalidMap = false, namedSecret = false, missingSecret = false, authDenied = false, modelStatus = 200, analysis = { summary: 'Synthetic summary', tasks: [{ title: 'Follow up' }] } } = {}) {
-  let handler; let claimed = false; const operations = []; const calls = []; const logs = [];
-  const meeting = { id: 'meeting-1', user_id: 'user-1', audio_path: 'user-1/audio.m4a', title: 'Fixture' };
+function fixture({ allowed = true, quotaError = null, providerError = null, providerType = null, providerStatus = 429, providerErrorAt = 'transcription', rawProviderBody = null, fetchFailure = null, claimError = null, modernKeys = false, invalidMap = false, namedSecret = false, missingSecret = false, authDenied = false, modelStatus = 200, failAt = null, missingRowAt = null, analysis = { summary: 'Synthetic summary', tasks: [{ title: 'Follow up' }] } } = {}) {
+  let handler; let claimed = false; const operations = []; const calls = []; const logs = []; const storedTasks = [];
+  const meeting = { id: 'meeting-1', user_id: 'user-1', audio_path: 'user-1/audio.m4a', title: 'Fixture', status: 'processing', transcript: null, summary: null };
   const client = role => ({
     auth: { getUser: async () => ({ data: { user: authDenied ? null : { id: 'user-1' } }, error: null }) },
     from(table) {
-      let op = 'select'; const query = {
-        select() { return query; }, eq() { return query; }, update() { op = 'update'; return query; }, insert() { op = 'insert'; return query; },
-        single: async () => { operations.push({ role, table, op }); return { data: meeting, error: null }; },
-        then(resolve) { operations.push({ role, table, op }); return Promise.resolve({ data: table === 'tasks' ? [] : meeting, error: null }).then(resolve); },
+      let op = 'select', values; const filters = [];
+      const execute = () => {
+        const phase = table === 'tasks' && op === 'insert' ? 'tasks' : op === 'update'
+          ? values.status === 'failed' ? 'failure_cleanup' : values.status === 'completed' ? 'completion'
+          : values.summary !== undefined ? 'summary' : values.transcript !== undefined ? 'transcript' : 'start'
+          : 'read';
+        operations.push({ role, table, op, phase, values, filters: [...filters] });
+        if (phase === failAt) return { data: null, error: { message: 'SENSITIVE DATABASE DETAIL' } };
+        if (phase === missingRowAt) return { data: null, error: null };
+        if (op === 'update') Object.assign(meeting, values);
+        if (op === 'insert' && table === 'tasks') storedTasks.push(...values.map((task, i) => ({ id: 'task-' + i, ...task })));
+        return { data: table === 'tasks' ? storedTasks.map(task => ({ ...task })) : { ...meeting }, error: null };
+      };
+      const query = {
+        select() { return query; }, eq(column, value) { filters.push([column, value]); return query; },
+        update(data) { op = 'update'; values = data; return query; }, insert(data) { op = 'insert'; values = data; return query; },
+        single: async () => execute(), then(resolve) { return Promise.resolve(execute()).then(resolve); },
       }; return query;
     },
     storage: { from: () => ({ download: async () => { operations.push({ role, op: 'download' }); return { data: new Blob(['synthetic'], { type: 'audio/mp4' }), error: null }; } }) },
@@ -29,7 +42,7 @@ function fixture({ allowed = true, quotaError = null, providerError = null, clai
     },
   });
   vm.runInNewContext(compiled, {
-    exports: {}, Request, Response, File, Blob, FormData, URL, AbortSignal,
+    exports: {}, Request, Response, File, Blob, FormData, URL, AbortSignal, Error,
     console: { error: (...items) => logs.push(items.join(' ')) },
     Deno: { env: { get: key => ({ SUPABASE_PUBLISHABLE_KEYS: invalidMap ? '{broken' : modernKeys ? JSON.stringify({ default: 'modern-public' }) : undefined, SUPABASE_SECRET_KEYS: missingSecret ? '{}' : namedSecret ? JSON.stringify({ 'ZENK-server': 'modern-secret' }) : modernKeys ? JSON.stringify({ default: 'modern-secret' }) : undefined, SUPABASE_URL: 'https://fixture.invalid', SUPABASE_ANON_KEY: 'anon', SUPABASE_SERVICE_ROLE_KEY: 'service', OPENAI_API_KEY: 'fake-key' })[key] } },
     require: name => name.includes('/http/server') ? { serve: fn => { handler = fn; } } : { createClient: (_url, key) => client(key === 'modern-public' ? 'anon' : key === 'modern-secret' ? 'service' : key) },
@@ -37,13 +50,20 @@ function fixture({ allowed = true, quotaError = null, providerError = null, clai
       if (url.includes('/v1/models/')) { calls.push({ url, options }); return new Response('{}', { status: modelStatus }); }
       assert.ok(operations.some(x => x.op === 'claim' && x.accepted && x.role === 'service'), 'claim before paid request');
       assert.ok(operations.some(x => x.op === 'quota' && x.role === 'service'), 'reserve quota before paid request');
+      const phase = url.includes('transcriptions') ? 'transcription' : 'analysis';
+      if (phase === 'analysis') {
+        assert.equal(meeting.transcript, 'Synthetic transcript', 'checkpoint transcription before analysis');
+        assert.ok(operations.some(x => x.phase === 'transcript' && x.filters.some(([column, value]) => column === 'user_id' && value === 'user-1')));
+      }
       calls.push({ url, options });
-      if (providerError) return new Response(JSON.stringify({ error: { code: providerError, message: 'SENSITIVE PROVIDER DETAIL' } }), { status: 429 });
-      return new Response(JSON.stringify(url.includes('transcriptions') ? { text: 'Synthetic transcript' } : { choices: [{ message: { content: JSON.stringify(analysis) } }] }));
+      if (fetchFailure) { const error = new Error('SENSITIVE NETWORK DETAIL'); error.name = fetchFailure; throw error; }
+      if ((providerError || providerType || rawProviderBody) && phase === providerErrorAt) return new Response(rawProviderBody ?? JSON.stringify({ error: { code: providerError, type: providerType, message: 'SENSITIVE PROVIDER DETAIL' } }), { status: providerStatus });
+      return new Response(JSON.stringify(phase === 'transcription' ? { text: 'Synthetic transcript' } : { choices: [{ message: { content: JSON.stringify(analysis) } }] }));
     },
   });
-  return { operations, calls, logs, request: (body = {}) => handler(new Request('https://fixture.invalid/process', { method: 'POST', headers: { Authorization: 'Bearer synthetic', 'Content-Type': 'application/json' }, body: JSON.stringify({ meetingId: meeting.id, ...body }) })) };
+  return { operations, calls, logs, meeting, storedTasks, request: (body = {}) => handler(new Request('https://fixture.invalid/process', { method: 'POST', headers: { Authorization: 'Bearer synthetic', 'Content-Type': 'application/json' }, body: JSON.stringify({ meetingId: meeting.id, ...body }) })) };
 }
+
 test('quota denies or fails closed without any provider call', async () => {
   for (const config of [{ allowed: false }, { quotaError: { message: 'database error' } }]) {
     const f = fixture(config); assert.equal((await f.request()).status, 500); assert.equal(f.calls.length, 0);
@@ -62,14 +82,17 @@ test('provider details are sanitized while billing/config codes survive', async 
   for (const code of ['insufficient_quota', 'invalid_api_key', 'unexpected_provider_error']) {
     const f = fixture({ providerError: code }); const text = await (await f.request()).text();
     assert.equal(f.calls.length, 1); assert.ok(!text.includes('SENSITIVE')); assert.ok(!text.includes('fake-key'));
-    assert.equal(JSON.parse(text).error, code === 'unexpected_provider_error' ? 'Processing failed' : code);
+    assert.equal(JSON.parse(text).error, code === 'unexpected_provider_error' ? 'OPENAI_RATE_LIMITED' : code);
   }
 });
 
 test('malformed model output never reaches a task insert', async () => {
   for (const analysis of [null, [], { tasks: {} }, { title: 7 }, { tasks: [{ title: 'Task', assignee: {} }] }, { tasks: [{ title: 'Task', due_date: '2026-02-30' }] }, { tasks: Array(101).fill({ title: 'Task' }) }]) {
     const f = fixture({ analysis });
-    assert.equal((await f.request()).status, 500);
+    const response = await f.request();
+    assert.equal(response.status, 502);
+    assert.equal((await response.json()).error, 'INVALID_AI_RESPONSE');
+    assert.equal(f.meeting.transcript, 'Synthetic transcript');
     assert.ok(!f.operations.some(x => x.op === 'insert'));
   }
 });
@@ -93,7 +116,7 @@ test('parallel and completed replays admit exactly one provider pipeline and one
 });
 test('provider failure keeps admission sealed on retry', async () => {
   const f = fixture({ providerError: 'insufficient_quota' });
-  assert.equal((await f.request()).status, 500);
+  assert.equal((await f.request()).status, 503);
   assert.equal((await f.request()).status, 409);
   assert.equal(f.calls.length, 1);
 });
@@ -167,4 +190,88 @@ test('failure logs identify a safe stage/status but never reveal provider detail
   assert.match(f.logs.join(' '), /429/);
   assert.ok(!f.logs.join(' ').includes('SENSITIVE'));
   assert.ok(!f.logs.join(' ').includes('fake-key'));
+});
+
+test('provider status and error type become safe actionable errors, never raw details', async () => {
+  const cases = [
+    [{ providerType: 'insufficient_quota', providerStatus: 429 }, 503, 'insufficient_quota'],
+    [{ providerError: 'some_auth_failure', providerStatus: 401 }, 503, 'invalid_api_key'],
+    [{ providerError: 'access_denied', providerStatus: 403 }, 503, 'OPENAI_ACCESS_DENIED'],
+    [{ providerError: 'model_not_found', providerStatus: 404 }, 503, 'OPENAI_MODEL_UNAVAILABLE'],
+    [{ providerError: 'rate_limit_exceeded', providerStatus: 429 }, 429, 'OPENAI_RATE_LIMITED'],
+    [{ rawProviderBody: '<html>SENSITIVE GATEWAY DETAIL</html>', providerStatus: 502 }, 502, 'OPENAI_UNAVAILABLE'],
+  ];
+  for (const [config, status, code] of cases) {
+    const f = fixture(config); const response = await f.request(); const body = await response.json();
+    assert.equal(response.status, status); assert.equal(body.error, code);
+    assert.equal(f.calls.length, 1);
+    assert.ok(!JSON.stringify(body).includes('SENSITIVE'));
+    assert.ok(!f.logs.join(' ').includes('SENSITIVE'));
+    assert.equal((await f.request()).status, 409, 'provider failure must not reopen admission');
+    assert.equal(f.calls.length, 1);
+  }
+});
+test('timeouts and network failures are classified without retry or sensitive details', async () => {
+  for (const [name, status, code] of [['TimeoutError', 504, 'OPENAI_TIMEOUT'], ['TypeError', 502, 'OPENAI_UNAVAILABLE']]) {
+    const f = fixture({ fetchFailure: name }); const response = await f.request();
+    assert.equal(response.status, status); assert.equal((await response.json()).error, code);
+    assert.equal(f.calls.length, 1); assert.ok(!f.logs.join(' ').includes('SENSITIVE'));
+  }
+});
+test('a failed analysis preserves the successful owner-scoped transcription', async () => {
+  const f = fixture({ providerError: 'rate_limit_exceeded', providerErrorAt: 'analysis' });
+  assert.equal((await f.request()).status, 429);
+  assert.equal(f.meeting.transcript, 'Synthetic transcript');
+  assert.equal(f.meeting.status, 'failed'); assert.equal(f.meeting.summary, null);
+  assert.equal(f.calls.length, 2); assert.equal(f.storedTasks.length, 0);
+  assert.equal((await f.request()).status, 409); assert.equal(f.calls.length, 2);
+});
+test('a missing start row or failed transcript checkpoint prevents unnecessary provider calls', async () => {
+  for (const [config, expectedCalls] of [[{ missingRowAt: 'start' }, 0], [{ failAt: 'transcript' }, 1], [{ missingRowAt: 'transcript' }, 1]]) {
+    const f = fixture(config); assert.equal((await f.request()).status, 500);
+    assert.equal(f.calls.length, expectedCalls);
+    assert.equal(f.storedTasks.length, 0);
+    assert.equal((await f.request()).status, 409); assert.equal(f.calls.length, expectedCalls);
+  }
+});
+test('task persistence failure never publishes a completed meeting and retains transcript/summary', async () => {
+  const f = fixture({ failAt: 'tasks' }); assert.equal((await f.request()).status, 500);
+  assert.equal(f.meeting.status, 'failed');
+  assert.equal(f.meeting.transcript, 'Synthetic transcript'); assert.equal(f.meeting.summary, 'Synthetic summary');
+  assert.ok(!f.operations.some(op => op.values?.status === 'completed'));
+  assert.equal(f.storedTasks.length, 0);
+});
+test('successful completion is published only after tasks have been persisted and read', async () => {
+  const f = fixture(); const response = await f.request(); const body = await response.json();
+  assert.equal(response.status, 200); assert.equal(body.meeting.status, 'completed'); assert.equal(body.tasks.length, 1);
+  const insert = f.operations.findIndex(op => op.table === 'tasks' && op.op === 'insert');
+  const read = f.operations.findIndex((op, index) => index > insert && op.table === 'tasks' && op.op === 'select');
+  const complete = f.operations.findIndex(op => op.values?.status === 'completed');
+  assert.ok(insert >= 0 && read > insert && complete > read);
+  for (const op of f.operations.filter(op => op.table === 'meetings' && op.op === 'update')) {
+    assert.equal(op.role, 'anon');
+    assert.ok(op.filters.some(([key, value]) => key === 'id' && value === 'meeting-1'));
+    assert.ok(op.filters.some(([key, value]) => key === 'user_id' && value === 'user-1'));
+  }
+});
+
+test('non-JSON successful provider replies are safe upstream errors and preserve a completed transcription', async () => {
+  for (const providerErrorAt of ['transcription', 'analysis']) {
+    const f = fixture({ providerErrorAt, rawProviderBody: 'SENSITIVE MALFORMED RESPONSE', providerStatus: 200 });
+    const response = await f.request();
+    assert.equal(response.status, 502);
+    assert.equal((await response.json()).error, 'INVALID_AI_RESPONSE');
+    assert.equal(f.meeting.transcript, providerErrorAt === 'analysis' ? 'Synthetic transcript' : null);
+    assert.ok(!f.logs.join(' ').includes('SENSITIVE'));
+  }
+});
+test('a failed completion write retains saved tasks but cannot duplicate them on replay', async () => {
+  const f = fixture({ failAt: 'completion' });
+  assert.equal((await f.request()).status, 500);
+  assert.equal(f.meeting.status, 'failed');
+  assert.equal(f.meeting.transcript, 'Synthetic transcript');
+  assert.equal(f.storedTasks.length, 1);
+  assert.equal((await f.request()).status, 409);
+  assert.equal(f.calls.length, 2);
+  assert.equal(f.storedTasks.length, 1);
 });

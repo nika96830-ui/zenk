@@ -61,12 +61,68 @@ const MIME_TYPES: Record<string, { extension: string; mime: string }> = {
 const EXTENSIONS_BY_MIME: Record<string, string> = { 'audio/webm': 'webm', 'audio/mp4': 'm4a', 'audio/aac': 'aac', 'audio/ogg': 'ogg', 'audio/wav': 'wav', 'audio/x-wav': 'wav', 'audio/mpeg': 'mp3' };
 const MONTHLY_MEETING_QUOTA = 5;
 
-function providerError(body: { error?: { code?: string } }): string {
-  if (body?.error?.code === 'insufficient_quota') return 'insufficient_quota';
-  if (body?.error?.code === 'invalid_api_key') return 'invalid_api_key';
-  return 'Processing failed';
+type ProcessingCode = 'insufficient_quota' | 'invalid_api_key' | 'OPENAI_ACCESS_DENIED' | 'OPENAI_MODEL_UNAVAILABLE' | 'OPENAI_RATE_LIMITED' | 'OPENAI_UNAVAILABLE' | 'OPENAI_TIMEOUT' | 'INVALID_AI_RESPONSE';
+class ProcessingFailure extends Error {
+  constructor(readonly publicCode: ProcessingCode, readonly httpStatus: number) { super(publicCode); }
+}
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return value !== null && typeof value === 'object' && !Array.isArray(value);
+}
+function providerError(body: unknown, status: number): ProcessingFailure {
+  const error = isRecord(body) && isRecord(body.error) ? body.error : {};
+  const tags = [error.code, error.type];
+  if (tags.includes('insufficient_quota')) return new ProcessingFailure('insufficient_quota', 503);
+  if (tags.includes('invalid_api_key') || status === 401) return new ProcessingFailure('invalid_api_key', 503);
+  if (status === 403) return new ProcessingFailure('OPENAI_ACCESS_DENIED', 503);
+  if (status === 404) return new ProcessingFailure('OPENAI_MODEL_UNAVAILABLE', 503);
+  if (status === 429) return new ProcessingFailure('OPENAI_RATE_LIMITED', 429);
+  return new ProcessingFailure('OPENAI_UNAVAILABLE', 502);
+}
+async function fetchProvider(url: string, init: RequestInit): Promise<Response> {
+  try { return await fetch(url, init); }
+  catch (error) {
+    const timeout = isRecord(error) && (error.name === 'TimeoutError' || error.name === 'AbortError');
+    throw new ProcessingFailure(timeout ? 'OPENAI_TIMEOUT' : 'OPENAI_UNAVAILABLE', timeout ? 504 : 502);
+  }
+}
+async function providerJson(response: Response): Promise<unknown> {
+  let body: unknown;
+  try { body = await response.json(); }
+  catch {
+    if (!response.ok) throw providerError(undefined, response.status);
+    throw new ProcessingFailure('INVALID_AI_RESPONSE', 502);
+  }
+  if (!response.ok) throw providerError(body, response.status);
+  return body;
+}
+type MeetingAnalysis = { title?: string; summary?: string; tasks: Array<{ title: string; assignee: string | null; due_date: string | null }> };
+function parseAnalysis(response: unknown): MeetingAnalysis {
+  const choices = isRecord(response) ? response.choices : undefined;
+  const choice = Array.isArray(choices) ? choices[0] : undefined;
+  const message = isRecord(choice) ? choice.message : undefined;
+  const content = isRecord(message) ? message.content : undefined;
+  if (typeof content !== 'string') throw new ProcessingFailure('INVALID_AI_RESPONSE', 502);
+  let analysis: unknown;
+  try { analysis = JSON.parse(content); } catch { throw new ProcessingFailure('INVALID_AI_RESPONSE', 502); }
+  if (!isRecord(analysis)
+    || (analysis.title !== undefined && typeof analysis.title !== 'string')
+    || (analysis.summary !== undefined && typeof analysis.summary !== 'string')
+    || (analysis.tasks !== undefined && !Array.isArray(analysis.tasks))) throw new ProcessingFailure('INVALID_AI_RESPONSE', 502);
+  const items = Array.isArray(analysis.tasks) ? analysis.tasks : [];
+  if (items.length > 100) throw new ProcessingFailure('INVALID_AI_RESPONSE', 502);
+  const tasks: MeetingAnalysis['tasks'] = [];
+  for (const item of items) {
+    if (!isRecord(item)) throw new ProcessingFailure('INVALID_AI_RESPONSE', 502);
+    const title = item.title, assignee = item.assignee, date = item.due_date;
+    if (typeof title !== 'string' || (assignee != null && typeof assignee !== 'string')
+      || (date != null && (typeof date !== 'string' || !/^\d{4}-\d{2}-\d{2}$/.test(date)
+        || !Number.isFinite(Date.parse(date)) || new Date(date).toISOString().slice(0, 10) !== date))) throw new ProcessingFailure('INVALID_AI_RESPONSE', 502);
+    tasks.push({ title, assignee: typeof assignee === 'string' ? assignee : null, due_date: typeof date === 'string' ? date : null });
+  }
+  return { title: typeof analysis.title === 'string' ? analysis.title : undefined, summary: typeof analysis.summary === 'string' ? analysis.summary : undefined, tasks };
 }
 function safeError(error: unknown): string {
+  if (error instanceof ProcessingFailure) return error.publicCode;
   const message = error instanceof Error ? error.message : '';
   return ['Monthly meeting quota exceeded', 'insufficient_quota', 'invalid_api_key', 'OPENAI_API_KEY is not configured', 'Supabase configuration is missing'].includes(message) ? message : 'Processing failed';
 }
@@ -139,16 +195,23 @@ serve(async (req) => {
     if (claimed !== true) return new Response(JSON.stringify({ error: 'MEETING_ALREADY_CLAIMED' }), { status: 409, headers: { ...headers, 'Content-Type': 'application/json' } });
     processingStarted = true;
     stage = 'start';
-    const { error: startError } = await userClient.from('meetings').update({ status: 'processing', updated_at: new Date().toISOString() }).eq('id', meetingId).eq('user_id', user.id);
-    if (startError) throw new Error('Failed to start processing');
+    const { data: started, error: startError } = await userClient.from('meetings').update({ status: 'processing', updated_at: new Date().toISOString() }).eq('id', meetingId).eq('user_id', user.id).select('id').single();
+    if (startError || !started) throw new Error('Failed to start processing');
     const transcriptionLanguage = ['ru', 'en', 'tr', 'az'].includes(language) ? language : 'ru'; const form = new FormData(); const filename = path.split('/').pop() || `recording.${fileFormat.extension}`;
     form.append('file', new File([fileData], filename, { type: fileFormat.mime })); form.append('model', 'whisper-1'); form.append('language', transcriptionLanguage);
     stage = 'transcription';
-    const whisperResponse = await fetch('https://api.openai.com/v1/audio/transcriptions', { method: 'POST', headers: { Authorization: `Bearer ${openAiKey}` }, body: form, signal: AbortSignal.timeout(120_000) });
+    const whisperResponse = await fetchProvider('https://api.openai.com/v1/audio/transcriptions', { method: 'POST', headers: { Authorization: `Bearer ${openAiKey}` }, body: form, signal: AbortSignal.timeout(120_000) });
     providerStatus = whisperResponse.status;
-    const whisperJson = await whisperResponse.json(); if (!whisperResponse.ok) throw new Error(providerError(whisperJson)); const transcript = typeof whisperJson.text === 'string' ? whisperJson.text.trim() : ''; if (!transcript) throw new Error('Empty transcript');
+    const whisperJson = await providerJson(whisperResponse);
+    const transcript = isRecord(whisperJson) && typeof whisperJson.text === 'string' ? whisperJson.text.trim() : '';
+    if (!transcript) throw new ProcessingFailure('INVALID_AI_RESPONSE', 502);
+    // Preserve the paid transcription even if analysis or task persistence later fails.
+    // Verify the owner-visible row still exists before making another paid request.
+    stage = 'transcript_save'; providerStatus = undefined;
+    const { data: checkpoint, error: transcriptError } = await userClient.from('meetings').update({ transcript, updated_at: new Date().toISOString() }).eq('id', meetingId).eq('user_id', user.id).select('id').single();
+    if (transcriptError || !checkpoint) throw new Error('Failed to save transcript');
     stage = 'analysis'; providerStatus = undefined;
-    const analysisResponse = await fetch('https://api.openai.com/v1/chat/completions', {
+    const analysisResponse = await fetchProvider('https://api.openai.com/v1/chat/completions', {
       method: 'POST', signal: AbortSignal.timeout(60_000), headers: { Authorization: `Bearer ${openAiKey}`, 'Content-Type': 'application/json' },
       body: JSON.stringify({ model: 'gpt-4o-mini', temperature: 0.2, max_tokens: 1200, response_format: { type: 'json_object' }, messages: [
         { role: 'system', content: 'You are Zenk meeting assistant. Reply JSON only: ' + '{"title":"short meeting title","summary":"bullet-style minutes in the same language as the transcript","tasks":[{"title":"action item","assignee":null,"due_date":null}]}. ' + 'due_date ISO date if mentioned, else null. No invented facts.' },
@@ -156,26 +219,11 @@ serve(async (req) => {
       ] }),
     });
     providerStatus = analysisResponse.status;
-    const analysisJson = await analysisResponse.json(); if (!analysisResponse.ok) throw new Error(providerError(analysisJson));
+    const analysisJson = await providerJson(analysisResponse);
     stage = 'analysis_validation';
-    let analysis: { title?: string; summary?: string; tasks?: Array<{ title: string; assignee?: string | null; due_date?: string | null }> };
-    try { analysis = JSON.parse(analysisJson.choices[0].message.content); } catch { throw new Error('Invalid GPT JSON'); }
-    // JSON mode guarantees syntax only. Validate every field before changing stored data.
-    if (!analysis || typeof analysis !== 'object' || Array.isArray(analysis)
-      || (analysis.title !== undefined && typeof analysis.title !== 'string')
-      || (analysis.summary !== undefined && typeof analysis.summary !== 'string')
-      || (analysis.tasks !== undefined && !Array.isArray(analysis.tasks))) throw new Error('Invalid GPT schema');
-    if ((analysis.tasks?.length || 0) > 100) throw new Error('Too many tasks');
-    for (const task of analysis.tasks || []) {
-      if (!task || typeof task.title !== 'string'
-        || (task.assignee != null && typeof task.assignee !== 'string')
-        || (task.due_date != null && (typeof task.due_date !== 'string'
-          || !/^\d{4}-\d{2}-\d{2}$/.test(task.due_date)
-          || !Number.isFinite(Date.parse(task.due_date))
-          || new Date(task.due_date).toISOString().slice(0, 10) !== task.due_date))) throw new Error('Invalid GPT task');
-    }
+    const analysis = parseAnalysis(analysisJson);
     stage = 'meeting_save'; providerStatus = undefined;
-    const { error: updateError } = await userClient.from('meetings').update({ title: analysis.title?.trim().slice(0, 200) || meeting.title || 'Meeting', transcript, summary: analysis.summary?.slice(0, 20000) || transcript.slice(0, 500), status: 'completed', updated_at: new Date().toISOString() }).eq('id', meetingId).eq('user_id', user.id);
+    const { error: updateError } = await userClient.from('meetings').update({ title: analysis.title?.trim().slice(0, 200) || meeting.title || 'Meeting', transcript, summary: analysis.summary?.slice(0, 20000) || transcript.slice(0, 500), updated_at: new Date().toISOString() }).eq('id', meetingId).eq('user_id', user.id);
     if (updateError) throw new Error('Failed to save meeting analysis');
     // Build inserts from the owner-verified meeting row, not the optional request-body field.
     // The explicit Insert[] contract keeps meeting_id required at compile time.
@@ -192,13 +240,17 @@ serve(async (req) => {
     stage = 'task_save';
     if (taskRows.length) { const { error: tasksError } = await userClient.from('tasks').insert(taskRows); if (tasksError) throw new Error('Failed to save meeting tasks'); }
     stage = 'read_result';
-    const { data: updated, error: readError } = await userClient.from('meetings').select('*').eq('id', meetingId).eq('user_id', user.id).single(); const { data: tasks, error: tasksReadError } = await userClient.from('tasks').select('*').eq('meeting_id', meetingId).eq('user_id', user.id);
-    if (readError || tasksReadError || !updated) throw new Error('Failed to read result');
+    const { data: tasks, error: tasksReadError } = await userClient.from('tasks').select('*').eq('meeting_id', meetingId).eq('user_id', user.id);
+    if (tasksReadError) throw new Error('Failed to read result');
+    // Publish completion only after analysis and all tasks are safely persisted/read.
+    stage = 'completion_save';
+    const { data: updated, error: completionError } = await userClient.from('meetings').update({ status: 'completed', updated_at: new Date().toISOString() }).eq('id', meetingId).eq('user_id', user.id).select('*').single();
+    if (completionError || !updated) throw new Error('Failed to complete meeting');
     return new Response(JSON.stringify({ success: true, meeting: updated, tasks: tasks || [] }), { headers: { ...headers, 'Content-Type': 'application/json' } });
   } catch (error) {
     // Never log keys, provider response bodies, transcript text, or request payloads.
     console.error('process-meeting failed', JSON.stringify({ stage, providerStatus, code: safeError(error) }));
     if (processingStarted && userClient && meetingId && ownerId) await userClient.from('meetings').update({ status: 'failed', updated_at: new Date().toISOString() }).eq('id', meetingId).eq('user_id', ownerId);
-    return new Response(JSON.stringify({ error: safeError(error), ...(missingConfiguration.length ? { missingConfiguration } : {}) }), { status: 500, headers: { ...headers, 'Content-Type': 'application/json' } });
+    return new Response(JSON.stringify({ error: safeError(error), ...(missingConfiguration.length ? { missingConfiguration } : {}) }), { status: error instanceof ProcessingFailure ? error.httpStatus : 500, headers: { ...headers, 'Content-Type': 'application/json' } });
   }
 });
