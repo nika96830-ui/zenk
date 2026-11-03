@@ -29,3 +29,22 @@ JWT verification, getUser, owner/path checks, caller RLS, service-only quota and
 Mocked provider failures cover authentication, quota type/code, permissions, missing models, rate limiting, non-JSON bodies and timeouts. Persistence tests cover transcription checkpoint failures, failed analysis, failed task insertion, final completion failures, and completion ordering; every write remains owner-filtered. Duplicate requests still return 409 without provider calls or duplicate tasks. Browser tests exercise real supabase-js FunctionsHttpError parsing over mocked HTTP.
 
 Run Deno checks, frontend TypeScript/build and the existing CI workflow. A successful mock/CI result is not live AI acceptance. Production deployment and any additional paid test require separate authorization; existing historical admissions and evidence must remain intact.
+
+
+## Analysis contract after v22
+
+The v22 live diagnostic returned GPT HTTP 200 but failed analysis validation.
+The exact invalid field was not recorded; the historical cause remains unknown.
+Generation now requests strict Structured Outputs (`json_schema`) with required
+string title/summary and a task array; each task requires title, nullable assignee
+and nullable due_date. Local validation remains mandatory, including real ISO
+calendar dates and the 100-task limit. Refusal, truncation and missing fields fail
+closed; there is no repair call, model fallback or automatic retry.
+
+Sanitized logs add `validationIssue` with fixed parser labels (for example,
+`summary`, `task_due_date`, `refusal`, `truncated`). They never contain field values,
+provider bodies or user text. The public error stays INVALID_AI_RESPONSE.
+Existing transcript checkpoints, final completion ordering and sealed claims remain.
+Mock tests prove the request contract and persistence/failure behavior, not live
+model success. This source change requires separate backend deployment authorization;
+no new paid verification or production update is performed by preparing this PR.

@@ -5,7 +5,7 @@ import vm from 'node:vm';
 import ts from 'typescript';
 const source = readFileSync(new URL('../supabase/functions/process-meeting/index.ts', import.meta.url), 'utf8');
 const compiled = ts.transpileModule(source, { compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022 } }).outputText;
-function fixture({ allowed = true, quotaError = null, providerError = null, providerType = null, providerStatus = 429, providerErrorAt = 'transcription', rawProviderBody = null, fetchFailure = null, claimError = null, modernKeys = false, invalidMap = false, namedSecret = false, missingSecret = false, authDenied = false, modelStatus = 200, failAt = null, missingRowAt = null, analysis = { summary: 'Synthetic summary', tasks: [{ title: 'Follow up' }] } } = {}) {
+function fixture({ allowed = true, quotaError = null, providerError = null, providerType = null, providerStatus = 429, providerErrorAt = 'transcription', rawProviderBody = null, fetchFailure = null, claimError = null, modernKeys = false, invalidMap = false, namedSecret = false, missingSecret = false, authDenied = false, modelStatus = 200, failAt = null, missingRowAt = null, finishReason = 'stop', refusal = null, analysis = { title: 'Synthetic meeting', summary: 'Synthetic summary', tasks: [{ title: 'Follow up', assignee: null, due_date: null }] } } = {}) {
   let handler; let claimed = false; const operations = []; const calls = []; const logs = []; const storedTasks = [];
   const meeting = { id: 'meeting-1', user_id: 'user-1', audio_path: 'user-1/audio.m4a', title: 'Fixture', status: 'processing', transcript: null, summary: null };
   const client = role => ({
@@ -58,7 +58,7 @@ function fixture({ allowed = true, quotaError = null, providerError = null, prov
       calls.push({ url, options });
       if (fetchFailure) { const error = new Error('SENSITIVE NETWORK DETAIL'); error.name = fetchFailure; throw error; }
       if ((providerError || providerType || rawProviderBody) && phase === providerErrorAt) return new Response(rawProviderBody ?? JSON.stringify({ error: { code: providerError, type: providerType, message: 'SENSITIVE PROVIDER DETAIL' } }), { status: providerStatus });
-      return new Response(JSON.stringify(phase === 'transcription' ? { text: 'Synthetic transcript' } : { choices: [{ message: { content: JSON.stringify(analysis) } }] }));
+      return new Response(JSON.stringify(phase === 'transcription' ? { text: 'Synthetic transcript' } : { choices: [{ finish_reason: finishReason, message: { refusal, content: JSON.stringify(analysis) } }] }));
     },
   });
   return { operations, calls, logs, meeting, storedTasks, request: (body = {}) => handler(new Request('https://fixture.invalid/process', { method: 'POST', headers: { Authorization: 'Bearer synthetic', 'Content-Type': 'application/json' }, body: JSON.stringify({ meetingId: meeting.id, ...body }) })) };
@@ -274,4 +274,42 @@ test('a failed completion write retains saved tasks but cannot duplicate them on
   assert.equal((await f.request()).status, 409);
   assert.equal(f.calls.length, 2);
   assert.equal(f.storedTasks.length, 1);
+});
+
+
+test('analysis request uses strict schema matching required parser fields', async () => {
+  const f = fixture(); assert.equal((await f.request()).status, 200);
+  const format = JSON.parse(f.calls[1].options.body).response_format;
+  assert.equal(format.type, 'json_schema'); assert.equal(format.json_schema.strict, true);
+  assert.deepEqual(format.json_schema.schema.required, ['title', 'summary', 'tasks']);
+});
+test('refused and truncated responses fail closed with safe diagnostic labels', async () => {
+  for (const [config, issue] of [[{ finishReason: 'length' }, 'truncated'], [{ refusal: 'PRIVATE PROVIDER TEXT' }, 'refusal'], [{ analysis: { title: 'PRIVATE', summary: [], tasks: [] } }, 'summary']]) {
+    const f = fixture(config); const response = await f.request();
+    assert.equal(response.status, 502); assert.equal((await response.json()).error, 'INVALID_AI_RESPONSE');
+    assert.ok(f.logs.some(log => log.includes('"validationIssue":"' + issue + '"')));
+    assert.ok(!f.logs.join('').includes('PRIVATE')); assert.equal(f.storedTasks.length, 0);
+    assert.equal(f.meeting.transcript, 'Synthetic transcript');
+    assert.equal((await f.request()).status, 409); assert.equal(f.calls.length, 2);
+  }
+});
+
+test('schema field failures retain transcript and report only a fixed field label', async () => {
+  const base = { title: 'Synthetic', summary: 'Synthetic summary', tasks: [] };
+  const cases = [
+    [{ ...base, title: null }, 'title'], [{ ...base, tasks: {} }, 'tasks'],
+    [{ ...base, tasks: [null] }, 'task'],
+    [{ ...base, tasks: [{ title: 7, assignee: null, due_date: null }] }, 'task_title'],
+    [{ ...base, tasks: [{ title: 'Task', assignee: {}, due_date: null }] }, 'task_assignee'],
+    [{ ...base, tasks: [{ title: 'Task', assignee: null, due_date: '2026-02-30' }] }, 'task_due_date'],
+  ];
+  for (const [analysis, issue] of cases) {
+    const f = fixture({ analysis }); assert.equal((await f.request()).status, 502);
+    assert.ok(f.logs.some(log => log.includes('"validationIssue":"' + issue + '"')));
+    assert.equal(f.storedTasks.length, 0); assert.equal(f.meeting.transcript, 'Synthetic transcript');
+  }
+  for (const due_date of [null, '2028-02-29']) {
+    const f = fixture({ analysis: { ...base, tasks: [{ title: 'Task', assignee: null, due_date }] } });
+    assert.equal((await f.request()).status, 200); assert.equal(f.storedTasks[0].due_date, due_date);
+  }
 });

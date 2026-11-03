@@ -63,7 +63,7 @@ const MONTHLY_MEETING_QUOTA = 5;
 
 type ProcessingCode = 'insufficient_quota' | 'invalid_api_key' | 'OPENAI_ACCESS_DENIED' | 'OPENAI_MODEL_UNAVAILABLE' | 'OPENAI_RATE_LIMITED' | 'OPENAI_UNAVAILABLE' | 'OPENAI_TIMEOUT' | 'INVALID_AI_RESPONSE';
 class ProcessingFailure extends Error {
-  constructor(readonly publicCode: ProcessingCode, readonly httpStatus: number) { super(publicCode); }
+  constructor(readonly publicCode: ProcessingCode, readonly httpStatus: number, readonly validationIssue?: string) { super(publicCode); }
 }
 function isRecord(value: unknown): value is Record<string, unknown> {
   return value !== null && typeof value === 'object' && !Array.isArray(value);
@@ -96,30 +96,52 @@ async function providerJson(response: Response): Promise<unknown> {
   return body;
 }
 type MeetingAnalysis = { title?: string; summary?: string; tasks: Array<{ title: string; assignee: string | null; due_date: string | null }> };
+// Schema-constrained generation still needs local validation (including calendar dates).
+const ANALYSIS_FORMAT = {
+  type: 'json_schema',
+  json_schema: { name: 'meeting_analysis', strict: true, schema: {
+    type: 'object', additionalProperties: false, required: ['title', 'summary', 'tasks'],
+    properties: {
+      title: { type: 'string' }, summary: { type: 'string' },
+      tasks: { type: 'array', items: {
+        type: 'object', additionalProperties: false, required: ['title', 'assignee', 'due_date'],
+        properties: { title: { type: 'string' }, assignee: { type: ['string', 'null'] }, due_date: { type: ['string', 'null'] } },
+      } },
+    },
+  } },
+};
+function invalidAnalysis(issue: string): never {
+  // Callers use only fixed labels; never include provider values or arbitrary property names.
+  throw new ProcessingFailure('INVALID_AI_RESPONSE', 502, issue);
+}
 function parseAnalysis(response: unknown): MeetingAnalysis {
   const choices = isRecord(response) ? response.choices : undefined;
   const choice = Array.isArray(choices) ? choices[0] : undefined;
-  const message = isRecord(choice) ? choice.message : undefined;
+  if (!isRecord(choice)) invalidAnalysis('choice');
+  if (choice.finish_reason === 'length') invalidAnalysis('truncated');
+  if (choice.finish_reason !== 'stop') invalidAnalysis('finish_reason');
+  const message = choice.message;
+  if (isRecord(message) && message.refusal != null) invalidAnalysis('refusal');
   const content = isRecord(message) ? message.content : undefined;
-  if (typeof content !== 'string') throw new ProcessingFailure('INVALID_AI_RESPONSE', 502);
+  if (typeof content !== 'string') invalidAnalysis('content');
   let analysis: unknown;
-  try { analysis = JSON.parse(content); } catch { throw new ProcessingFailure('INVALID_AI_RESPONSE', 502); }
-  if (!isRecord(analysis)
-    || (analysis.title !== undefined && typeof analysis.title !== 'string')
-    || (analysis.summary !== undefined && typeof analysis.summary !== 'string')
-    || (analysis.tasks !== undefined && !Array.isArray(analysis.tasks))) throw new ProcessingFailure('INVALID_AI_RESPONSE', 502);
-  const items = Array.isArray(analysis.tasks) ? analysis.tasks : [];
-  if (items.length > 100) throw new ProcessingFailure('INVALID_AI_RESPONSE', 502);
+  try { analysis = JSON.parse(content); } catch { invalidAnalysis('json'); }
+  if (!isRecord(analysis)) invalidAnalysis('root');
+  if (typeof analysis.title !== 'string') invalidAnalysis('title');
+  if (typeof analysis.summary !== 'string') invalidAnalysis('summary');
+  if (!Array.isArray(analysis.tasks)) invalidAnalysis('tasks');
+  if (analysis.tasks.length > 100) invalidAnalysis('task_count');
   const tasks: MeetingAnalysis['tasks'] = [];
-  for (const item of items) {
-    if (!isRecord(item)) throw new ProcessingFailure('INVALID_AI_RESPONSE', 502);
+  for (const item of analysis.tasks) {
+    if (!isRecord(item)) invalidAnalysis('task');
     const title = item.title, assignee = item.assignee, date = item.due_date;
-    if (typeof title !== 'string' || (assignee != null && typeof assignee !== 'string')
-      || (date != null && (typeof date !== 'string' || !/^\d{4}-\d{2}-\d{2}$/.test(date)
-        || !Number.isFinite(Date.parse(date)) || new Date(date).toISOString().slice(0, 10) !== date))) throw new ProcessingFailure('INVALID_AI_RESPONSE', 502);
-    tasks.push({ title, assignee: typeof assignee === 'string' ? assignee : null, due_date: typeof date === 'string' ? date : null });
+    if (typeof title !== 'string') invalidAnalysis('task_title');
+    if (assignee !== null && typeof assignee !== 'string') invalidAnalysis('task_assignee');
+    if (date !== null && (typeof date !== 'string' || !/^\d{4}-\d{2}-\d{2}$/.test(date)
+      || !Number.isFinite(Date.parse(date)) || new Date(date).toISOString().slice(0, 10) !== date)) invalidAnalysis('task_due_date');
+    tasks.push({ title, assignee, due_date: date });
   }
-  return { title: typeof analysis.title === 'string' ? analysis.title : undefined, summary: typeof analysis.summary === 'string' ? analysis.summary : undefined, tasks };
+  return { title: analysis.title, summary: analysis.summary, tasks };
 }
 function safeError(error: unknown): string {
   if (error instanceof ProcessingFailure) return error.publicCode;
@@ -213,7 +235,7 @@ serve(async (req) => {
     stage = 'analysis'; providerStatus = undefined;
     const analysisResponse = await fetchProvider('https://api.openai.com/v1/chat/completions', {
       method: 'POST', signal: AbortSignal.timeout(60_000), headers: { Authorization: `Bearer ${openAiKey}`, 'Content-Type': 'application/json' },
-      body: JSON.stringify({ model: 'gpt-4o-mini', temperature: 0.2, max_tokens: 1200, response_format: { type: 'json_object' }, messages: [
+      body: JSON.stringify({ model: 'gpt-4o-mini', temperature: 0.2, max_tokens: 1200, response_format: ANALYSIS_FORMAT, messages: [
         { role: 'system', content: 'You are Zenk meeting assistant. Reply JSON only: ' + '{"title":"short meeting title","summary":"bullet-style minutes in the same language as the transcript","tasks":[{"title":"action item","assignee":null,"due_date":null}]}. ' + 'due_date ISO date if mentioned, else null. No invented facts.' },
         { role: 'user', content: transcript },
       ] }),
@@ -249,7 +271,7 @@ serve(async (req) => {
     return new Response(JSON.stringify({ success: true, meeting: updated, tasks: tasks || [] }), { headers: { ...headers, 'Content-Type': 'application/json' } });
   } catch (error) {
     // Never log keys, provider response bodies, transcript text, or request payloads.
-    console.error('process-meeting failed', JSON.stringify({ stage, providerStatus, code: safeError(error) }));
+    console.error('process-meeting failed', JSON.stringify({ stage, providerStatus, code: safeError(error), validationIssue: error instanceof ProcessingFailure ? error.validationIssue : undefined }));
     if (processingStarted && userClient && meetingId && ownerId) await userClient.from('meetings').update({ status: 'failed', updated_at: new Date().toISOString() }).eq('id', meetingId).eq('user_id', ownerId);
     return new Response(JSON.stringify({ error: safeError(error), ...(missingConfiguration.length ? { missingConfiguration } : {}) }), { status: error instanceof ProcessingFailure ? error.httpStatus : 500, headers: { ...headers, 'Content-Type': 'application/json' } });
   }
