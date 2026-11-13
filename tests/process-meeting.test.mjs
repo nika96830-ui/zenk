@@ -281,7 +281,7 @@ test('analysis request uses strict schema matching required parser fields', asyn
   const f = fixture(); assert.equal((await f.request()).status, 200);
   const format = JSON.parse(f.calls[1].options.body).response_format;
   assert.equal(format.type, 'json_schema'); assert.equal(format.json_schema.strict, true);
-  assert.deepEqual(format.json_schema.schema.required, ['title', 'summary', 'tasks']);
+  assert.deepEqual(format.json_schema.schema.required, ['title', 'summary', 'topics', 'decisions', 'tasks']);
 });
 test('refused and truncated responses fail closed with safe diagnostic labels', async () => {
   for (const [config, issue] of [[{ finishReason: 'length' }, 'truncated'], [{ refusal: 'PRIVATE PROVIDER TEXT' }, 'refusal'], [{ analysis: { title: 'PRIVATE', summary: [], tasks: [] } }, 'summary']]) {
