@@ -1,0 +1,7 @@
+id: zenk
+syntax: '1.5.0'
+input:
+  entry: app.prs
+targets:
+  - github
+universalDir: true
