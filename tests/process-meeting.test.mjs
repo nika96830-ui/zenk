@@ -281,7 +281,7 @@ test('analysis request uses strict schema matching required parser fields', asyn
   const f = fixture(); assert.equal((await f.request()).status, 200);
   const format = JSON.parse(f.calls[1].options.body).response_format;
   assert.equal(format.type, 'json_schema'); assert.equal(format.json_schema.strict, true);
-  assert.deepEqual(format.json_schema.schema.required, ['title', 'summary', 'tasks']);
+  assert.deepEqual(format.json_schema.schema.required, ['title', 'summary', 'topics', 'decisions', 'tasks']);
 });
 test('refused and truncated responses fail closed with safe diagnostic labels', async () => {
   for (const [config, issue] of [[{ finishReason: 'length' }, 'truncated'], [{ refusal: 'PRIVATE PROVIDER TEXT' }, 'refusal'], [{ analysis: { title: 'PRIVATE', summary: [], tasks: [] } }, 'summary']]) {
@@ -311,5 +311,26 @@ test('schema field failures retain transcript and report only a fixed field labe
   for (const due_date of [null, '2028-02-29']) {
     const f = fixture({ analysis: { ...base, tasks: [{ title: 'Task', assignee: null, due_date }] } });
     assert.equal((await f.request()).status, 200); assert.equal(f.storedTasks[0].due_date, due_date);
+  }
+});
+
+test('topic/decision arrays are sanitized and written with owner-scoped meeting summary', async () => {
+  const f = fixture({ analysis: { title: 'Meeting', summary: 'Summary', topics: ['  Budget  ', 'Roadmap'], decisions: [' Approved '], tasks: [] } });
+  const response = await f.request();
+  assert.equal(response.status, 200);
+  const summary = f.operations.find(x => x.phase === 'summary');
+  assert.ok(summary);
+  assert.deepEqual(Array.from(summary.values.topics), ['Budget', 'Roadmap']);
+  assert.deepEqual(Array.from(summary.values.decisions), ['Approved']);
+  assert.ok(summary.filters.some(([column, value]) => column === 'user_id' && value === 'user-1'));
+});
+
+test('invalid AI analysis arrays fail closed before modifying meeting or tasks', async () => {
+  for (const fields of [{topics: 'incorrect',decisions:[]},{topics:[null],decisions:[]},{topics:[],decisions:[42]}]) {
+    const f = fixture({ analysis: {title:'Meeting',summary:'Summary',tasks:[],...fields} });
+    const response = await f.request();
+    assert.equal(response.status, 502);
+    assert.equal((await response.json()).error, 'INVALID_AI_RESPONSE');
+    assert.ok(!f.operations.some(x => x.phase === 'summary' || x.op === 'insert'));
   }
 });

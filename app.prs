@@ -1,0 +1,39 @@
+# PromptScript Configuration for ZENK
+# Stack: React + Vite + Capacitor (iOS / Android)
+
+@meta {
+  id: "zenk"
+  syntax: "1.5.0"
+}
+
+@context {
+  project: "ZENK"
+  platform: "capacitor"
+  web_engine: "vite"
+  framework: "react"
+  ui_language: "az"
+}
+
+@skills {
+  vercel-react-native-skills: {}
+  sleek-design-mobile-apps: {}
+  systematic-debugging: {}
+  agent-browser: {}
+}
+
+@standards {
+  performance: [
+    "Optimize bundle size with Vite dynamic imports",
+    "Ensure smooth animations in WebView using transform and opacity",
+    "Handle safe-area-insets explicitly for iOS notch and Android status bars"
+  ]
+  mobile_design: [
+    "Follow mobile-first approach with touch feedback and gesture support",
+    "Avoid browser-specific scrollbars; use momentum scrolling for mobile overflow",
+    "Maintain Azerbaijani locale across all UI elements and strings"
+  ]
+  debugging: [
+    "Apply hypothesis-driven debugging before modifying platform code",
+    "Inspect Capacitor bridge logs for native build issues"
+  ]
+}

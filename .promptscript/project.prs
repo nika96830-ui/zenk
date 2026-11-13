@@ -1,0 +1,26 @@
+# Skill declarations recovered from the November 10 source snapshot.
+# Declaring a skill does not install it. Only load skills when present.
+@skills {
+  vercel-react-native-skills: { description: "React Native and Expo implementation and performance guidance" }
+  sleek-design-mobile-apps: { description: "Mobile-first design for iOS, Android and HTML" }
+  systematic-debugging: { description: "Root-cause debugging" }
+  agent-browser: { description: "Browser automation workflows" }
+  expo-animation: {}
+  expo-app-clip: {}
+  expo-brownfield: {}
+  expo-data-fetching: {}
+  expo-design-system: {}
+  expo-dev-client: {}
+  expo-dom: {}
+  expo-examples: {}
+  expo-migrate-module: {}
+  expo-module: {}
+  expo-native-ui: {}
+  expo-overview: {}
+  expo-project-structure: {}
+  expo-router: {}
+  expo-skill-eval: {}
+  expo-ui: {}
+  expo-upgrade: {}
+  expo-web-to-native: {}
+}
