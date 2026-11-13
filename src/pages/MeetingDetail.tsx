@@ -5,6 +5,7 @@ import type { Meeting } from '../types';
 import { useI18n } from '../i18n/I18nProvider';
 import { exportToNotion, exportToTrello } from '../services/export';
 import { useState } from 'react';
+import { getMeetingAnalysisCopy } from '../i18n/meetingAnalysisCopy';
 
 interface Props {
   meetings: Meeting[];
@@ -15,7 +16,8 @@ interface Props {
 export function MeetingDetailPage({ meetings, onToggleTask, onEditTask }: Props) {
   const { id } = useParams();
   const navigate = useNavigate();
-  const { t } = useI18n();
+  const { t, locale } = useI18n();
+  const analysisCopy = getMeetingAnalysisCopy(locale);
   const [exporting, setExporting] = useState(false);
   const [exportFailed, setExportFailed] = useState(false);
   const meeting = meetings.find((m) => m.id === id);
@@ -59,6 +61,18 @@ export function MeetingDetailPage({ meetings, onToggleTask, onEditTask }: Props)
         <>
           <h2 style={{ marginTop: 24, marginBottom: 8 }}>{t.meeting.protocol}</h2>
           <p style={{ color: 'var(--text)', lineHeight: 1.5 }}>{meeting.summary || t.empty.transcript}</p>
+          {Boolean(meeting.topics?.length) && (
+            <section aria-label={analysisCopy.topics}>
+              <h2 style={{ marginTop: 24, marginBottom: 8 }}>{analysisCopy.topics}</h2>
+              <ul>{meeting.topics!.map((topic, i) => <li key={i}>{topic}</li>)}</ul>
+            </section>
+          )}
+          {Boolean(meeting.decisions?.length) && (
+            <section aria-label={analysisCopy.decisions}>
+              <h2 style={{ marginTop: 24, marginBottom: 8 }}>{analysisCopy.decisions}</h2>
+              <ul>{meeting.decisions!.map((decision, i) => <li key={i}>{decision}</li>)}</ul>
+            </section>
+          )}
           <h2 style={{ marginTop: 24, marginBottom: 8 }}>{t.meeting.tasks}</h2>
           {meeting.tasks.length === 0 ? <p style={{ color: 'var(--muted)' }}>{t.meeting.noTasks}</p> : (
             <ul style={{ listStyle: 'none', padding: 0 }}>
