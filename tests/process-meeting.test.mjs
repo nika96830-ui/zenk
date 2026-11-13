@@ -313,3 +313,24 @@ test('schema field failures retain transcript and report only a fixed field labe
     assert.equal((await f.request()).status, 200); assert.equal(f.storedTasks[0].due_date, due_date);
   }
 });
+
+test('topic/decision arrays are sanitized and written with owner-scoped meeting summary', async () => {
+  const f = fixture({ analysis: { title: 'Meeting', summary: 'Summary', topics: ['  Budget  ', 'Roadmap'], decisions: [' Approved '], tasks: [] } });
+  const response = await f.request();
+  assert.equal(response.status, 200);
+  const summary = f.operations.find(x => x.phase === 'summary');
+  assert.ok(summary);
+  assert.deepEqual(Array.from(summary.values.topics), ['Budget', 'Roadmap']);
+  assert.deepEqual(Array.from(summary.values.decisions), ['Approved']);
+  assert.ok(summary.filters.some(([column, value]) => column === 'user_id' && value === 'user-1'));
+});
+
+test('invalid AI analysis arrays fail closed before modifying meeting or tasks', async () => {
+  for (const fields of [{topics: 'incorrect',decisions:[]},{topics:[null],decisions:[]},{topics:[],decisions:[42]}]) {
+    const f = fixture({ analysis: {title:'Meeting',summary:'Summary',tasks:[],...fields} });
+    const response = await f.request();
+    assert.equal(response.status, 502);
+    assert.equal((await response.json()).error, 'INVALID_AI_RESPONSE');
+    assert.ok(!f.operations.some(x => x.phase === 'summary' || x.op === 'insert'));
+  }
+});

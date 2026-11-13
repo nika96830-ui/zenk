@@ -8,9 +8,9 @@ type Database = {
   public: {
     Tables: {
       meetings: {
-        Row: { id: string; user_id: string; audio_path: string | null; title: string; status: string; transcript: string | null; summary: string | null; updated_at: string | null };
-        Insert: { id?: string; user_id: string; audio_path?: string | null; title?: string; status?: string; transcript?: string | null; summary?: string | null; updated_at?: string | null };
-        Update: { user_id?: string; audio_path?: string | null; title?: string; status?: string; transcript?: string | null; summary?: string | null; updated_at?: string | null };
+        Row: { id: string; user_id: string; audio_path: string | null; title: string; status: string; transcript: string | null; summary: string | null; topics: string[]; decisions: string[]; updated_at: string | null };
+        Insert: { id?: string; user_id: string; audio_path?: string | null; title?: string; status?: string; transcript?: string | null; summary?: string | null; topics?: string[]; decisions?: string[]; updated_at?: string | null };
+        Update: { user_id?: string; audio_path?: string | null; title?: string; status?: string; transcript?: string | null; summary?: string | null; topics?: string[]; decisions?: string[]; updated_at?: string | null };
         Relationships: [];
       };
       tasks: {
@@ -95,14 +95,14 @@ async function providerJson(response: Response): Promise<unknown> {
   if (!response.ok) throw providerError(body, response.status);
   return body;
 }
-type MeetingAnalysis = { title?: string; summary?: string; tasks: Array<{ title: string; assignee: string | null; due_date: string | null }> };
+type MeetingAnalysis = { title?: string; summary?: string; topics?: string[]; decisions?: string[]; tasks: Array<{ title: string; assignee: string | null; due_date: string | null }> };
 // Schema-constrained generation still needs local validation (including calendar dates).
 const ANALYSIS_FORMAT = {
   type: 'json_schema',
   json_schema: { name: 'meeting_analysis', strict: true, schema: {
-    type: 'object', additionalProperties: false, required: ['title', 'summary', 'tasks'],
+    type: 'object', additionalProperties: false, required: ['title', 'summary', 'topics', 'decisions', 'tasks'],
     properties: {
-      title: { type: 'string' }, summary: { type: 'string' },
+      title: { type: 'string' }, summary: { type: 'string' }, topics: { type: 'array', items: { type: 'string' } }, decisions: { type: 'array', items: { type: 'string' } },
       tasks: { type: 'array', items: {
         type: 'object', additionalProperties: false, required: ['title', 'assignee', 'due_date'],
         properties: { title: { type: 'string' }, assignee: { type: ['string', 'null'] }, due_date: { type: ['string', 'null'] } },
@@ -131,6 +131,13 @@ function parseAnalysis(response: unknown): MeetingAnalysis {
   if (typeof analysis.summary !== 'string') invalidAnalysis('summary');
   if (!Array.isArray(analysis.tasks)) invalidAnalysis('tasks');
   if (analysis.tasks.length > 100) invalidAnalysis('task_count');
+  const sanitizeList = (value: unknown, key: 'topics' | 'decisions'): string[] => {
+    if (value === undefined) return []; // Compatibility with existing stored/mock AI responses.
+    if (!Array.isArray(value) || value.length > 30 || value.some(item => typeof item !== 'string')) invalidAnalysis(key);
+    return value.map((item: string) => item.trim().slice(0, 500)).filter(Boolean);
+  };
+  const topics = sanitizeList(analysis.topics, 'topics');
+  const decisions = sanitizeList(analysis.decisions, 'decisions');
   const tasks: MeetingAnalysis['tasks'] = [];
   for (const item of analysis.tasks) {
     if (!isRecord(item)) invalidAnalysis('task');
@@ -141,7 +148,7 @@ function parseAnalysis(response: unknown): MeetingAnalysis {
       || !Number.isFinite(Date.parse(date)) || new Date(date).toISOString().slice(0, 10) !== date)) invalidAnalysis('task_due_date');
     tasks.push({ title, assignee, due_date: date });
   }
-  return { title: analysis.title, summary: analysis.summary, tasks };
+  return { title: analysis.title, summary: analysis.summary, topics, decisions, tasks };
 }
 function safeError(error: unknown): string {
   if (error instanceof ProcessingFailure) return error.publicCode;
@@ -236,7 +243,7 @@ serve(async (req) => {
     const analysisResponse = await fetchProvider('https://api.openai.com/v1/chat/completions', {
       method: 'POST', signal: AbortSignal.timeout(60_000), headers: { Authorization: `Bearer ${openAiKey}`, 'Content-Type': 'application/json' },
       body: JSON.stringify({ model: 'gpt-4o-mini', temperature: 0.2, max_tokens: 1200, response_format: ANALYSIS_FORMAT, messages: [
-        { role: 'system', content: 'You are Zenk meeting assistant. Reply JSON only: ' + '{"title":"short meeting title","summary":"bullet-style minutes in the same language as the transcript","tasks":[{"title":"action item","assignee":null,"due_date":null}]}. ' + 'due_date ISO date if mentioned, else null. No invented facts.' },
+        { role: 'system', content: 'You are Zenk meeting assistant. Reply JSON only: ' + '{"title":"short meeting title","summary":"bullet-style minutes in the same language as the transcript","topics":["key discussed topic"],"decisions":["explicitly agreed decision"],"tasks":[{"title":"action item","assignee":null,"due_date":null}]}. ' + 'Use [] for unknown topics or decisions; do not infer decisions from suggestions. due_date ISO date if mentioned, else null. No invented facts.' },
         { role: 'user', content: transcript },
       ] }),
     });
@@ -245,7 +252,7 @@ serve(async (req) => {
     stage = 'analysis_validation';
     const analysis = parseAnalysis(analysisJson);
     stage = 'meeting_save'; providerStatus = undefined;
-    const { error: updateError } = await userClient.from('meetings').update({ title: analysis.title?.trim().slice(0, 200) || meeting.title || 'Meeting', transcript, summary: analysis.summary?.slice(0, 20000) || transcript.slice(0, 500), updated_at: new Date().toISOString() }).eq('id', meetingId).eq('user_id', user.id);
+    const { error: updateError } = await userClient.from('meetings').update({ title: analysis.title?.trim().slice(0, 200) || meeting.title || 'Meeting', transcript, summary: analysis.summary?.slice(0, 20000) || transcript.slice(0, 500), topics: analysis.topics || [], decisions: analysis.decisions || [], updated_at: new Date().toISOString() }).eq('id', meetingId).eq('user_id', user.id);
     if (updateError) throw new Error('Failed to save meeting analysis');
     // Build inserts from the owner-verified meeting row, not the optional request-body field.
     // The explicit Insert[] contract keeps meeting_id required at compile time.
