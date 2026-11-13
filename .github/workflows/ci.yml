@@ -2,9 +2,9 @@ name: CI
 
 on:
   push:
-    branches: [main, fix/zang-explicit-api-grants]
+    branches: [main, fix/zang-explicit-api-grants, integration/nov10-pr14-recovery]
   pull_request:
-    branches: [main, fix/zang-production-hardening]
+    branches: [main, fix/zang-production-hardening, fix/zenk-consolidated-security]
 
 jobs:
   build:
@@ -33,7 +33,7 @@ jobs:
           ZANG_BROWSER=webkit node tests/audio-api-browser.mjs
           node tests/iphone-qa-browser.mjs
           ZANG_BROWSER=webkit node tests/iphone-qa-browser.mjs
-      - run: node --test tests/regressions.test.mjs tests/process-meeting.test.mjs tests/cors.test.mjs tests/runtime-keys.test.mjs
+      - run: node --test tests/regressions.test.mjs tests/process-meeting.test.mjs tests/cors.test.mjs tests/runtime-keys.test.mjs tests/analysis-arrays.test.mjs tests/analysis-labels.test.mjs
       - name: Set up Deno
         uses: denoland/setup-deno@v2
         with:
@@ -72,7 +72,9 @@ jobs:
             -f tests/sql/task-ownership-assertions.sql \
             -f tests/sql/processing-claims-fixture.sql \
             -f supabase/migrations/20261102130115_meeting_processing_claim.sql \
-            -f tests/sql/processing-claims-assertions.sql
+            -f tests/sql/processing-claims-assertions.sql \
+            -f supabase/migrations/20261110145804_add_meeting_analysis_arrays.sql \
+            -f tests/sql/meeting-analysis-assertions.sql
 
   api-grants-migration-test:
     runs-on: ubuntu-24.04
@@ -139,7 +141,8 @@ jobs:
             -f supabase/migrations/20261021000000_remove_stripe.sql \
             -f supabase/migrations/20261022000000_task_meeting_ownership.sql \
             -f supabase/migrations/20261024000000_explicit_api_grants.sql \
-            -f supabase/migrations/20261102130115_meeting_processing_claim.sql
+            -f supabase/migrations/20261102130115_meeting_processing_claim.sql \
+            -f supabase/migrations/20261110145804_add_meeting_analysis_arrays.sql
       - name: Validate Supabase E2E test syntax
         run: node --check tests/supabase-local-e2e.mjs
       - name: Verify real local Auth, two-user RLS, and usage quota
