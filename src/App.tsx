@@ -6,6 +6,7 @@ import { MeetingDetailPage } from './pages/MeetingDetail';
 import { RecordPage } from './pages/Record';
 import { SettingsPage } from './pages/Settings';
 import { AuthPage } from './pages/Auth';
+import { ResetPasswordPage } from './pages/ResetPassword';
 import { useOffline } from './hooks/useOffline';
 import { useTheme } from './hooks/useTheme';
 import { useAuth } from './hooks/useAuth';
@@ -13,7 +14,7 @@ import { usePushNotifications } from './hooks/usePushNotifications';
 import { useI18n } from './i18n/I18nProvider';
 
 export default function App() {
-  const { isOnline, meetings, toggleTask } = useOffline();
+  const { isOnline, meetings, setMeetings, toggleTask, editTask } = useOffline();
   const { isAuthenticated, loading } = useAuth();
   const { t } = useI18n();
   useTheme();
@@ -26,6 +27,16 @@ export default function App() {
     return (
       <div className="app-shell" style={{ display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
         <div style={{ color: 'var(--muted)' }}>{t.loading}</div>
+      </div>
+    );
+  }
+
+  if (location.pathname === '/reset-password') {
+    return (
+      <div className="app-shell">
+        <main className="app-content" style={{ paddingBottom: 0 }}>
+          <ResetPasswordPage />
+        </main>
       </div>
     );
   }
@@ -47,8 +58,8 @@ export default function App() {
       <main className="app-content">
         <Routes>
           <Route path="/" element={<MeetingsPage meetings={meetings} />} />
-          <Route path="/meeting/:id" element={<MeetingDetailPage meetings={meetings} onToggleTask={toggleTask} />} />
-          <Route path="/record" element={<RecordPage />} />
+          <Route path="/meeting/:id" element={<MeetingDetailPage meetings={meetings} onToggleTask={toggleTask} onEditTask={editTask} />} />
+          <Route path="/record" element={<RecordPage onMeetingCreated={(created) => setMeetings((previous) => [created, ...previous.filter((meeting) => meeting.id !== created.id)])} />} />
           <Route path="/settings" element={<SettingsPage />} />
         </Routes>
       </main>
