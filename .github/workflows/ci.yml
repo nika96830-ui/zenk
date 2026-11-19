@@ -21,13 +21,17 @@ jobs:
       - name: Install headless browser for mocked E2E
         run: |
           npm install --no-save playwright@1.56.1
-          npx playwright install --with-deps chromium
+          npx playwright install --with-deps chromium webkit
       - name: Run browser smoke tests with mocked Supabase Auth
         run: |
           npx vite preview --host 127.0.0.1 > /tmp/zang-vite-preview.log 2>&1 &
           echo $! > /tmp/zang-vite-preview.pid
           node tests/browser-smoke.mjs
-      - run: node --test tests/regressions.test.mjs
+      - name: Audio codecs, M4A upload and HTTP errors (mock APIs)
+        run: |
+          node tests/audio-api-browser.mjs
+          ZANG_BROWSER=webkit node tests/audio-api-browser.mjs
+      - run: node --test tests/regressions.test.mjs tests/process-meeting.test.mjs
       - name: Set up Deno
         uses: denoland/setup-deno@v2
         with:

@@ -14,7 +14,7 @@ import { usePushNotifications } from './hooks/usePushNotifications';
 import { useI18n } from './i18n/I18nProvider';
 
 export default function App() {
-  const { isOnline, meetings, setMeetings, toggleTask } = useOffline();
+  const { isOnline, meetings, setMeetings, toggleTask, editTask } = useOffline();
   const { isAuthenticated, loading } = useAuth();
   const { t } = useI18n();
   useTheme();
@@ -58,7 +58,7 @@ export default function App() {
       <main className="app-content">
         <Routes>
           <Route path="/" element={<MeetingsPage meetings={meetings} />} />
-          <Route path="/meeting/:id" element={<MeetingDetailPage meetings={meetings} onToggleTask={toggleTask} />} />
+          <Route path="/meeting/:id" element={<MeetingDetailPage meetings={meetings} onToggleTask={toggleTask} onEditTask={editTask} />} />
           <Route path="/record" element={<RecordPage onMeetingCreated={(created) => setMeetings((previous) => [created, ...previous.filter((meeting) => meeting.id !== created.id)])} />} />
           <Route path="/settings" element={<SettingsPage />} />
         </Routes>

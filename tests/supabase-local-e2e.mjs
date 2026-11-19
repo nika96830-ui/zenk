@@ -6,11 +6,14 @@ const anonKey = process.env.SUPABASE_ANON_KEY;
 const serviceRoleKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
 assert.ok(url && anonKey && serviceRoleKey, 'local Supabase URL and keys must be supplied by the ephemeral stack');
 
+assert.ok(['127.0.0.1', 'localhost', '[::1]'].includes(new URL(url).hostname), 'test must target an ephemeral local stack');
+
 const authOptions = { auth: { persistSession: false, autoRefreshToken: false, detectSessionInUrl: false } };
 const admin = createClient(url, serviceRoleKey, authOptions);
 const password = 'ZangLocalE2E!2026';
 const suffix = `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
 const createdUserIds = [];
+const createdAudioPaths = [];
 
 async function createTestUser(label) {
   const email = `zang-${label}-${suffix}@example.test`;
@@ -72,13 +75,41 @@ try {
   assert.equal(crossOwnerUpdate.error, null, 'RLS should silently filter unauthorized task update');
   assert.deepEqual(crossOwnerUpdate.data, [], 'user B must not update user A task');
 
-  const validUpdate = await clientA.from('tasks').update({ completed: true }).eq('id', taskA.id).select('id').single();
+  const validUpdate = await clientA.from('tasks').update({ completed: true, title: 'Edited task', assignee: 'QA', due_date: '2026-11-05' }).eq('id', taskA.id).select('id').single();
   assert.equal(validUpdate.error, null, 'owner task update: ' + (validUpdate.error?.message || ''));
   assert.equal(validUpdate.data.id, taskA.id);
+
+  assert.equal((await clientA.auth.signOut()).error, null);
+  assert.equal((await clientA.auth.signInWithPassword({ email: userA.email, password })).error, null);
+  const persistedMeeting = await clientA.from('meetings').select('title').eq('id', meetingA.id).single();
+  assert.equal(persistedMeeting.error, null);
+  assert.equal(persistedMeeting.data.title, 'Synthetic meeting A');
+  const persistedTask = await clientA.from('tasks').select('completed,title,assignee,due_date').eq('id', taskA.id).single();
+  assert.equal(persistedTask.error, null);
+  assert.equal(persistedTask.data.completed, true);
+  assert.equal(persistedTask.data.title, 'Edited task');
+  assert.equal(persistedTask.data.assignee, 'QA');
+  assert.equal(persistedTask.data.due_date, '2026-11-05');
+  console.log('PASS local Supabase persistence: meeting and task update survive sign-out and sign-in');
 
   const planEscalation = await clientA.from('profiles').update({ plan: 'pro' }).eq('id', userA.id).select('plan').single();
   assert.ok(planEscalation.error, 'authenticated user must not elevate their own plan');
   console.log('PASS local Supabase RLS: meeting/task reads and writes are owner-scoped; plan escalation blocked');
+
+  const audioPath = `${userA.id}/qa.m4a`;
+  const uploaded = await clientA.storage.from('recordings').upload(audioPath, new Blob(['synthetic fixture'], { type: 'audio/mp4' }), { contentType: 'audio/mp4' });
+  assert.equal(uploaded.error, null, 'owner may upload M4A');
+  createdAudioPaths.push(audioPath);
+  assert.equal((await clientA.storage.from('recordings').download(audioPath)).error, null, 'owner may read recording');
+  assert.ok((await clientB.storage.from('recordings').download(audioPath)).error, 'other user may not read recording');
+  assert.ok((await clientB.storage.from('recordings').upload(`${userA.id}/forged.m4a`, new Blob(['synthetic']), { contentType: 'audio/mp4' })).error, 'other user may not upload into owner folder');
+  const signed = await clientA.storage.from('recordings').createSignedUrl(audioPath, 300);
+  assert.equal(signed.error, null);
+  assert.equal((await fetch(signed.data.signedUrl)).ok, true, 'owner signed URL plays private object');
+  assert.ok((await clientB.storage.from('recordings').createSignedUrl(audioPath, 300)).error, 'other user may not sign owner recording');
+  const publicUrl = clientA.storage.from('recordings').getPublicUrl(audioPath).data.publicUrl;
+  assert.equal((await fetch(publicUrl)).ok, false, 'private recording must not be publicly downloadable');
+  console.log('PASS local Storage: owner M4A upload/download, cross-user and public access denied');
 
   const period = new Date();
   period.setUTCDate(1);
@@ -105,6 +136,10 @@ try {
   assert.ok(clientReservation.error, 'authenticated clients must not call service-only usage reservation');
   console.log('PASS local Supabase quota RPC: service role allowed; client role denied; quota enforced');
 } finally {
+  if (createdAudioPaths.length) {
+    const { error } = await admin.storage.from('recordings').remove(createdAudioPaths);
+    assert.equal(error, null, 'remove synthetic audio fixtures');
+  }
   await Promise.all(createdUserIds.map(async (id) => {
     const { error } = await admin.auth.admin.deleteUser(id);
     if (error) throw new Error(`cleanup temporary user ${id}: ${error.message}`);

@@ -298,6 +298,70 @@ try {
   await page.getByText('Send the proposal', { exact: true }).waitFor({ state: 'visible' });
   assert.equal(await page.evaluate(() => window.__zangTrackStopped === true), true, 'microphone track must be released after stop');
   console.log('PASS mocked browser recording → meeting detail → task rendering and microphone cleanup');
+  await page.route('**/functions/v1/export-tasks', route => route.fulfill({ status: 500, contentType: 'application/json', body: JSON.stringify({ success: false }) }));
+  await page.getByRole('button', { name: /Notion/ }).click();
+  await page.getByRole('alert').waitFor({ state: 'visible' });
+  assert.equal(await page.getByRole('alert').innerText(), 'Could not export.');
+  await page.route('**/functions/v1/export-tasks', route => route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ success: true, content: 'Task,Done\\nSynthetic,yes', format: 'csv' }) }));
+  const downloadPromise = page.waitForEvent('download');
+  await page.getByRole('button', { name: /Notion/ }).click();
+  const download = await downloadPromise;
+  assert.equal(download.suggestedFilename(), 'zang-tasks.csv');
+  assert.equal(await page.getByRole('alert').count(), 0);
+  console.log('PASS mocked export: visible error, retry and CSV download');
+  let edits = 0;
+  await page.route('**/rest/v1/tasks*', async route => {
+    if (route.request().method() !== 'PATCH') return route.fulfill({ status: 200, contentType: 'application/json', body: '[]' });
+    edits++;
+    const url = new URL(route.request().url());
+    assert.equal(url.searchParams.get('user_id'), `eq.${mockUser.id}`);
+    assert.equal(url.searchParams.get('meeting_id'), 'eq.33333333-3333-4333-8333-333333333333');
+    if (edits === 1) return route.fulfill({ status: 503, contentType: 'application/json', body: '{"message":"temporary failure"}' });
+    await route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ id: '44444444-4444-4444-8444-444444444444', ...route.request().postDataJSON() }) });
+  });
+  await page.getByRole('button', { name: 'Edit task', exact: true }).click();
+  await page.getByLabel('Task title', { exact: true }).fill('Updated proposal');
+  await page.getByLabel('Assignee', { exact: true }).fill('QA Owner');
+  await page.getByLabel('Due date', { exact: true }).fill('2026-11-05');
+  await page.getByLabel('Completed', { exact: true }).check();
+  await page.getByRole('button', { name: 'Save', exact: true }).click();
+  await page.getByRole('alert').waitFor();
+  assert.equal(await page.getByLabel('Task title', { exact: true }).inputValue(), 'Updated proposal');
+  await page.getByRole('button', { name: 'Save', exact: true }).click();
+  await page.getByText('Updated proposal', { exact: true }).waitFor();
+  await page.getByText('QA Owner · 2026-11-05', { exact: true }).waitFor();
+  assert.equal(await page.locator('input[type="checkbox"]').isChecked(), true);
+  await page.getByRole('button', { name: 'Edit task', exact: true }).click();
+  await page.getByLabel('Task title', { exact: true }).fill('Unsaved');
+  await page.getByRole('button', { name: 'Cancel', exact: true }).click();
+  assert.equal(edits, 2);
+  await page.getByText('Updated proposal', { exact: true }).waitFor();
+  console.log('PASS task editor: title/assignee/date/completion save, failure preserves draft, retry and cancel');
+
+  let signs = 0;
+  await page.route('**/rest/v1/meetings*', async route => {
+    const url = new URL(route.request().url());
+    assert.equal(url.searchParams.get('user_id'), `eq.${mockUser.id}`);
+    await route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ audio_path: `${mockUser.id}/sample.wav` }) });
+  });
+  await page.route('**/storage/v1/object/sign/**', async route => {
+    signs++;
+    assert.equal(route.request().postDataJSON().expiresIn, 300);
+    if (signs === 1) return route.fulfill({ status: 403, contentType: 'application/json', body: '{"message":"denied"}' });
+    await route.fulfill({ status: 200, contentType: 'application/json', body: '{"signedURL":"/object/sign/recordings/sample.wav?token=synthetic"}' });
+  });
+  const wav = Buffer.alloc(44 + 16000);
+  wav.write('RIFF'); wav.writeUInt32LE(wav.length - 8, 4); wav.write('WAVEfmt ', 8); wav.writeUInt32LE(16, 16); wav.writeUInt16LE(1, 20); wav.writeUInt16LE(1, 22); wav.writeUInt32LE(8000, 24); wav.writeUInt32LE(16000, 28); wav.writeUInt16LE(2, 32); wav.writeUInt16LE(16, 34); wav.write('data', 36); wav.writeUInt32LE(16000, 40);
+  await page.route('**/storage/v1/object/sign/recordings/sample.wav?token=*', route => route.fulfill({ status: 200, contentType: 'audio/wav', body: wav }));
+  await page.getByRole('button', { name: 'Load recording', exact: true }).click();
+  await page.getByRole('alert').waitFor();
+  await page.getByRole('button', { name: 'Load recording', exact: true }).click();
+  await page.locator('audio').waitFor();
+  await page.locator('audio').evaluate(async audio => { await audio.play(); });
+  await page.waitForFunction(() => document.querySelector('audio')?.ended);
+  assert.equal(await page.evaluate(() => JSON.stringify(localStorage).includes('token=synthetic')), false);
+  console.log('PASS private player: owner lookup, expiring URL, error/retry, actual WAV playback, no URL cache');
+
   await page.close();
 } finally {
   await browser.close();

@@ -46,7 +46,13 @@ CREATE POLICY "Users manage own tasks"
 ON public.tasks
 FOR ALL
 TO authenticated
-USING ((SELECT auth.uid()) = user_id)
+USING (
+  (SELECT auth.uid()) = user_id
+  AND EXISTS (
+    SELECT 1 FROM public.meetings AS m
+    WHERE m.id = meeting_id AND m.user_id = (SELECT auth.uid())
+  )
+)
 WITH CHECK (
   (SELECT auth.uid()) = user_id
   AND EXISTS (
