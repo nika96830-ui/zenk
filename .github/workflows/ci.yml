@@ -34,12 +34,8 @@ jobs:
           node tests/iphone-qa-browser.mjs
           ZANG_BROWSER=webkit node tests/iphone-qa-browser.mjs
       - run: node --test tests/regressions.test.mjs tests/process-meeting.test.mjs tests/cors.test.mjs tests/runtime-keys.test.mjs
-      - name: Set up Deno
-        uses: denoland/setup-deno@v2
-        with:
-          deno-version: v2.x
       - name: Type-check Supabase Edge Functions
-        run: deno check --no-lock supabase/functions/process-meeting/index.ts supabase/functions/export-tasks/index.ts
+        run: npm exec --yes --package=deno@2.9.6 -- deno check --no-lock supabase/functions/process-meeting/index.ts supabase/functions/export-tasks/index.ts
 
   migration-test:
     runs-on: ubuntu-24.04

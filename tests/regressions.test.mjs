@@ -59,7 +59,6 @@ test('migration and processor enforce private quota-backed recordings', () => {
   assert.doesNotMatch(processor, /model: 'gpt-6-luna'/);
   assert.match(processor, /model: 'gpt-4o-mini', temperature: 0\.2/);
   assert.match(processor, /Access-Control-Allow-Origin/);
-  assert.match(processor, /configured \? new URL\(configured\)\.origin : '\*'/);
 });
 
 test('export is owner-bound and does not trust client task arrays', () => {

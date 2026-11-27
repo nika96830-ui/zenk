@@ -9,6 +9,8 @@ OpenAI key only on Supabase Secrets — never in Vercel or the browser.
 | `process-meeting` | Audio → Whisper → GPT minutes/tasks → DB |
 | `export-tasks` | CSV / Markdown export |
 
+Set the optional `ALLOWED_ORIGIN` Supabase secret to the exact frontend origins permitted to call both functions. Separate multiple origins with commas. For the two public ZANG domains, use `https://zenk-zangui.vercel.app,https://zenk-virid.vercel.app`.
+
 ## Deploy
 
 ```bash
