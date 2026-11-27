@@ -8,7 +8,7 @@ type Database = {
   public: {
     Tables: {
       meetings: {
-        Row: { id: string; user_id: string; audio_path: string | null; title: string; status: string; transcript: string | null; summary: string | null; updated_at: string | null };
+        Row: { id: string; user_id: string; audio_path: string | null; title: string; status: string; transcript: string | null; summary: string | null; created_at: string; updated_at: string | null };
         Insert: { id?: string; user_id: string; audio_path?: string | null; title?: string; status?: string; transcript?: string | null; summary?: string | null; updated_at?: string | null };
         Update: { user_id?: string; audio_path?: string | null; title?: string; status?: string; transcript?: string | null; summary?: string | null; updated_at?: string | null };
         Relationships: [];
@@ -96,6 +96,7 @@ async function providerJson(response: Response): Promise<unknown> {
   return body;
 }
 type MeetingAnalysis = { title?: string; summary?: string; tasks: Array<{ title: string; assignee: string | null; due_date: string | null }> };
+const ISO_DATE = /^\d{4}-\d{2}-\d{2}$/;
 // Schema-constrained generation still needs local validation (including calendar dates).
 const ANALYSIS_FORMAT = {
   type: 'json_schema',
@@ -104,8 +105,11 @@ const ANALYSIS_FORMAT = {
     properties: {
       title: { type: 'string' }, summary: { type: 'string' },
       tasks: { type: 'array', items: {
-        type: 'object', additionalProperties: false, required: ['title', 'assignee', 'due_date'],
-        properties: { title: { type: 'string' }, assignee: { type: ['string', 'null'] }, due_date: { type: ['string', 'null'] } },
+        type: 'object', additionalProperties: false, required: ['title', 'assignee', 'due_date', 'due_in_days'],
+        properties: {
+          title: { type: 'string' }, assignee: { type: ['string', 'null'] },
+          due_date: { type: ['string', 'null'] }, due_in_days: { type: ['integer', 'null'] },
+        },
       } },
     },
   } },
@@ -114,7 +118,23 @@ function invalidAnalysis(issue: string): never {
   // Callers use only fixed labels; never include provider values or arbitrary property names.
   throw new ProcessingFailure('INVALID_AI_RESPONSE', 502, issue);
 }
-function parseAnalysis(response: unknown): MeetingAnalysis {
+function getMeetingDate(createdAt: string, timeZone: unknown): string {
+  const date = new Date(createdAt);
+  if (typeof timeZone === 'string' && timeZone.length <= 64) {
+    try {
+      const parts = new Intl.DateTimeFormat('en', {
+        timeZone, year: 'numeric', month: '2-digit', day: '2-digit',
+      }).formatToParts(date);
+      const { year, month, day } = Object.fromEntries(parts.map(({ type, value }) => [type, value]));
+      return [year, month, day].join('-');
+    } catch (error) {
+      if (!(error instanceof RangeError)) throw error;
+    }
+  }
+  return date.toISOString().slice(0, 10);
+}
+
+function parseAnalysis(response: unknown, meetingDate: string, transcript: string): MeetingAnalysis {
   const choices = isRecord(response) ? response.choices : undefined;
   const choice = Array.isArray(choices) ? choices[0] : undefined;
   if (!isRecord(choice)) invalidAnalysis('choice');
@@ -134,11 +154,26 @@ function parseAnalysis(response: unknown): MeetingAnalysis {
   const tasks: MeetingAnalysis['tasks'] = [];
   for (const item of analysis.tasks) {
     if (!isRecord(item)) invalidAnalysis('task');
-    const title = item.title, assignee = item.assignee, date = item.due_date;
+    const title = item.title, assignee = item.assignee, days = item.due_in_days;
+    let date = item.due_date;
     if (typeof title !== 'string') invalidAnalysis('task_title');
     if (assignee !== null && typeof assignee !== 'string') invalidAnalysis('task_assignee');
-    if (date !== null && (typeof date !== 'string' || !/^\d{4}-\d{2}-\d{2}$/.test(date)
+    if (date !== null && (typeof date !== 'string' || !ISO_DATE.test(date)
       || !Number.isFinite(Date.parse(date)) || new Date(date).toISOString().slice(0, 10) !== date)) invalidAnalysis('task_due_date');
+    if (days !== null) {
+      if (typeof days !== 'number' || !Number.isSafeInteger(days)) invalidAnalysis('task_due_in_days');
+      // The anchor is a calendar date. UTC arithmetic here also handles DST transitions.
+      const due = new Date(meetingDate);
+      due.setUTCDate(due.getUTCDate() + days);
+      if (!Number.isFinite(due.getTime())) invalidAnalysis('task_due_in_days');
+      const day = due.toISOString().split('T')[0];
+      if (!ISO_DATE.test(day)) invalidAnalysis('task_due_in_days');
+      date = day;
+    } else if (typeof date === 'string') {
+      // Preserve explicitly mentioned older years while discarding invented ones.
+      const year = date.slice(0, 4);
+      if (year < meetingDate.slice(0, 4) && !new RegExp('\\b' + year + '\\b').test(transcript)) date = null;
+    }
     tasks.push({ title, assignee, due_date: date });
   }
   return { title: analysis.title, summary: analysis.summary, tasks };
@@ -183,7 +218,7 @@ serve(async (req) => {
     if (authError || !user) return new Response(JSON.stringify({ error: 'Unauthorized' }), { status: 401, headers: { ...headers, 'Content-Type': 'application/json' } });
     ownerId = user.id; admin = createClient<Database>(supabaseUrl, serviceKey);
     stage = 'meeting_lookup';
-    const { data: meeting, error: meetingError } = await userClient.from('meetings').select('id, user_id, audio_path, title').eq('id', meetingId).eq('user_id', user.id).single();
+    const { data: meeting, error: meetingError } = await userClient.from('meetings').select('id, user_id, audio_path, title, created_at').eq('id', meetingId).eq('user_id', user.id).single();
     if (meetingError || !meeting) throw new Error('Meeting not found');
     const path = meeting.audio_path; if (typeof path !== 'string' || !path.startsWith(`${user.id}/`) || path.split('/').some(part => !/^[A-Za-z0-9_.-]+$/.test(part) || part === '.' || part === '..') || (audioPath !== undefined && audioPath !== path)) throw new Error('Recording path is invalid');
     if (body.action !== undefined && body.action !== 'check-ai-configuration') throw new Error('Unsupported action');
@@ -202,6 +237,7 @@ serve(async (req) => {
       }));
       return new Response(JSON.stringify({ modelAccess, modelMetadataAccessible: modelAccess.every(item => item.httpStatus === 200), inferenceRequested: false, billingVerified: false }), { headers: { ...headers, 'Content-Type': 'application/json' } });
     }
+    const meetingDate = getMeetingDate(meeting.created_at, body.timeZone);
     stage = 'audio_download';
     const { data: fileData, error: downloadError } = await userClient.storage.from('recordings').download(path);
     if (downloadError || !fileData) throw new Error('Failed to download recording'); if (!fileData.size) throw new Error('Empty recording'); if (fileData.size > MAX_AUDIO_BYTES) throw new Error('Recording exceeds the 25 MB limit');
@@ -239,14 +275,19 @@ serve(async (req) => {
     const analysisResponse = await fetchProvider('https://api.openai.com/v1/chat/completions', {
       method: 'POST', signal: AbortSignal.timeout(60_000), headers: { Authorization: `Bearer ${openAiKey}`, 'Content-Type': 'application/json' },
       body: JSON.stringify({ model: 'gpt-4o-mini', temperature: 0.2, max_tokens: 1200, response_format: ANALYSIS_FORMAT, messages: [
-        { role: 'system', content: 'You are Zenk meeting assistant. Reply JSON only: ' + '{"title":"short meeting title","summary":"bullet-style minutes in the same language as the transcript","tasks":[{"title":"action item","assignee":null,"due_date":null}]}. ' + 'due_date ISO date if mentioned, else null. No invented facts.' },
+        { role: 'system', content: [
+          'You are the ZANG meeting assistant. Write a short title, bullet-style minutes in the same language as the transcript, and extract action items. Do not invent facts.',
+          'The meeting took place on ' + meetingDate + ' (YYYY-MM-DD). Interpret deadlines relative to this local calendar date.',
+          'For a relative deadline, set due_in_days to the calendar-day offset from the meeting date and set due_date to null. Today is 0, tomorrow is 1, and in two days is 2.',
+          'For an explicit calendar deadline, set due_date to YYYY-MM-DD and set due_in_days to null. Use the meeting date to resolve any omitted year. If the deadline is missing or ambiguous, set both fields to null.',
+        ].join('\n') },
         { role: 'user', content: transcript },
       ] }),
     });
     providerStatus = analysisResponse.status;
     const analysisJson = await providerJson(analysisResponse);
     stage = 'analysis_validation';
-    const analysis = parseAnalysis(analysisJson);
+    const analysis = parseAnalysis(analysisJson, meetingDate, transcript);
     stage = 'meeting_save'; providerStatus = undefined;
     const { error: updateError } = await userClient.from('meetings').update({ title: analysis.title?.trim().slice(0, 200) || meeting.title || 'Meeting', transcript, summary: analysis.summary?.slice(0, 20000) || transcript.slice(0, 500), updated_at: new Date().toISOString() }).eq('id', meetingId).eq('user_id', user.id);
     if (updateError) throw new Error('Failed to save meeting analysis');

@@ -18,7 +18,8 @@ export async function processRecording(audioBlob: Blob,title='New meeting',langu
   const extension=MIME_EXTENSIONS[mimeType];if(!extension)throw new Error('UNSUPPORTED_AUDIO_TYPE');
   const audioPath=`${user.id}/${crypto.randomUUID()}.${extension}`;const {error:uploadError}=await supabase.storage.from('recordings').upload(audioPath,audioBlob.slice(0,audioBlob.size,mimeType),{contentType:mimeType,upsert:false});if(uploadError)throw new Error('UPLOAD_FAILED');
   const {data:meetingRow,error:insertError}=await supabase.from('meetings').insert({user_id:user.id,title,status:'processing',audio_path:audioPath}).select().single();if(insertError)throw new Error('SAVE_FAILED');
-  const {data,error}=await supabase.functions.invoke('process-meeting',{body:{meetingId:meetingRow.id,audioPath,language}});
+  const timeZone = Intl.DateTimeFormat().resolvedOptions().timeZone;
+  const {data,error}=await supabase.functions.invoke('process-meeting',{body:{meetingId:meetingRow.id,audioPath,language,timeZone}});
   if(error||data?.error){
     // supabase-js returns data:null for non-2xx responses. Read the response body
     // without leaking provider text to the UI or consuming the original response.

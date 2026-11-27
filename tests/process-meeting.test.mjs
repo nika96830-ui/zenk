@@ -5,9 +5,9 @@ import vm from 'node:vm';
 import ts from 'typescript';
 const source = readFileSync(new URL('../supabase/functions/process-meeting/index.ts', import.meta.url), 'utf8');
 const compiled = ts.transpileModule(source, { compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022 } }).outputText;
-function fixture({ allowed = true, quotaError = null, providerError = null, providerType = null, providerStatus = 429, providerErrorAt = 'transcription', rawProviderBody = null, fetchFailure = null, claimError = null, modernKeys = false, invalidMap = false, namedSecret = false, missingSecret = false, authDenied = false, modelStatus = 200, failAt = null, missingRowAt = null, finishReason = 'stop', refusal = null, analysis = { title: 'Synthetic meeting', summary: 'Synthetic summary', tasks: [{ title: 'Follow up', assignee: null, due_date: null }] } } = {}) {
+function fixture({ allowed = true, quotaError = null, providerError = null, providerType = null, providerStatus = 429, providerErrorAt = 'transcription', rawProviderBody = null, fetchFailure = null, claimError = null, modernKeys = false, invalidMap = false, namedSecret = false, missingSecret = false, authDenied = false, modelStatus = 200, failAt = null, missingRowAt = null, finishReason = 'stop', refusal = null, createdAt = '2026-11-26T21:20:00Z', transcript = 'Synthetic transcript', analysis = { title: 'Synthetic meeting', summary: 'Synthetic summary', tasks: [{ title: 'Follow up', assignee: null, due_date: null, due_in_days: null }] } } = {}) {
   let handler; let claimed = false; const operations = []; const calls = []; const logs = []; const storedTasks = [];
-  const meeting = { id: 'meeting-1', user_id: 'user-1', audio_path: 'user-1/audio.m4a', title: 'Fixture', status: 'processing', transcript: null, summary: null };
+  const meeting = { id: 'meeting-1', user_id: 'user-1', audio_path: 'user-1/audio.m4a', title: 'Fixture', status: 'processing', transcript: null, summary: null, created_at: createdAt };
   const client = role => ({
     auth: { getUser: async () => ({ data: { user: authDenied ? null : { id: 'user-1' } }, error: null }) },
     from(table) {
@@ -52,13 +52,13 @@ function fixture({ allowed = true, quotaError = null, providerError = null, prov
       assert.ok(operations.some(x => x.op === 'quota' && x.role === 'service'), 'reserve quota before paid request');
       const phase = url.includes('transcriptions') ? 'transcription' : 'analysis';
       if (phase === 'analysis') {
-        assert.equal(meeting.transcript, 'Synthetic transcript', 'checkpoint transcription before analysis');
+        assert.equal(meeting.transcript, transcript, 'checkpoint transcription before analysis');
         assert.ok(operations.some(x => x.phase === 'transcript' && x.filters.some(([column, value]) => column === 'user_id' && value === 'user-1')));
       }
       calls.push({ url, options });
       if (fetchFailure) { const error = new Error('SENSITIVE NETWORK DETAIL'); error.name = fetchFailure; throw error; }
       if ((providerError || providerType || rawProviderBody) && phase === providerErrorAt) return new Response(rawProviderBody ?? JSON.stringify({ error: { code: providerError, type: providerType, message: 'SENSITIVE PROVIDER DETAIL' } }), { status: providerStatus });
-      return new Response(JSON.stringify(phase === 'transcription' ? { text: 'Synthetic transcript' } : { choices: [{ finish_reason: finishReason, message: { refusal, content: JSON.stringify(analysis) } }] }));
+      return new Response(JSON.stringify(phase === 'transcription' ? { text: transcript } : { choices: [{ finish_reason: finishReason, message: { refusal, content: JSON.stringify(analysis) } }] }));
     },
   });
   return { operations, calls, logs, meeting, storedTasks, request: (body = {}) => handler(new Request('https://fixture.invalid/process', { method: 'POST', headers: { Authorization: 'Bearer synthetic', 'Content-Type': 'application/json' }, body: JSON.stringify({ meetingId: meeting.id, ...body }) })) };
@@ -282,6 +282,40 @@ test('analysis request uses strict schema matching required parser fields', asyn
   const format = JSON.parse(f.calls[1].options.body).response_format;
   assert.equal(format.type, 'json_schema'); assert.equal(format.json_schema.strict, true);
   assert.deepEqual(format.json_schema.schema.required, ['title', 'summary', 'tasks']);
+  assert.deepEqual(format.json_schema.schema.properties.tasks.items.required, ['title', 'assignee', 'due_date', 'due_in_days']);
+});
+test('relative deadlines use the local meeting date and take precedence over a generated absolute date', async () => {
+  const analysis = { title: 'Planning', summary: 'Send the notes tomorrow', tasks: [
+    { title: 'Check signup', assignee: null, due_date: null, due_in_days: 0 },
+    { title: 'Send notes', assignee: 'Alex', due_date: '2023-10-06', due_in_days: 1 },
+  ] };
+  const f = fixture({ transcript: 'Check signup today. Alex will send the notes tomorrow.', analysis });
+  assert.equal((await f.request({ timeZone: 'Asia/Baku' })).status, 200);
+  assert.deepEqual(f.storedTasks.map(task => task.due_date), ['2026-11-27', '2026-11-28']);
+  assert.match(JSON.parse(f.calls[1].options.body).messages[0].content, /The meeting took place on 2026-11-27/);
+});
+test('relative deadlines cross the new year and older clients fall back to the UTC date', async () => {
+  const analysis = { title: 'Planning', summary: 'Send the notes tomorrow', tasks: [
+    { title: 'Send notes', assignee: 'Alex', due_date: null, due_in_days: 1 },
+  ] };
+  for (const body of [{}, { timeZone: 'invalid-zone' }]) {
+    const f = fixture({ createdAt: '2026-12-31T23:30:00Z', analysis });
+    assert.equal((await f.request(body)).status, 200);
+    assert.equal(f.storedTasks[0].due_date, '2027-01-01');
+  }
+});
+test('a generated past year is saved only when that year is mentioned in the transcript', async () => {
+  const analysis = { title: 'Planning', summary: 'Alex will send notes', tasks: [
+    { title: 'Send notes', assignee: 'Alex', due_date: '2023-10-06', due_in_days: null },
+  ] };
+  for (const [transcript, expected] of [
+    ['Alex will send the notes tomorrow.', null],
+    ['The notes were due on October 6, 2023.', '2023-10-06'],
+  ]) {
+    const f = fixture({ transcript, analysis });
+    assert.equal((await f.request()).status, 200);
+    assert.equal(f.storedTasks[0].due_date, expected);
+  }
 });
 test('refused and truncated responses fail closed with safe diagnostic labels', async () => {
   for (const [config, issue] of [[{ finishReason: 'length' }, 'truncated'], [{ refusal: 'PRIVATE PROVIDER TEXT' }, 'refusal'], [{ analysis: { title: 'PRIVATE', summary: [], tasks: [] } }, 'summary']]) {
@@ -301,7 +335,8 @@ test('schema field failures retain transcript and report only a fixed field labe
     [{ ...base, tasks: [null] }, 'task'],
     [{ ...base, tasks: [{ title: 7, assignee: null, due_date: null }] }, 'task_title'],
     [{ ...base, tasks: [{ title: 'Task', assignee: {}, due_date: null }] }, 'task_assignee'],
-    [{ ...base, tasks: [{ title: 'Task', assignee: null, due_date: '2026-02-30' }] }, 'task_due_date'],
+    [{ ...base, tasks: [{ title: 'Task', assignee: null, due_date: '2026-02-30', due_in_days: null }] }, 'task_due_date'],
+    [{ ...base, tasks: [{ title: 'Task', assignee: null, due_date: null, due_in_days: 1.5 }] }, 'task_due_in_days'],
   ];
   for (const [analysis, issue] of cases) {
     const f = fixture({ analysis }); assert.equal((await f.request()).status, 502);
@@ -309,7 +344,7 @@ test('schema field failures retain transcript and report only a fixed field labe
     assert.equal(f.storedTasks.length, 0); assert.equal(f.meeting.transcript, 'Synthetic transcript');
   }
   for (const due_date of [null, '2028-02-29']) {
-    const f = fixture({ analysis: { ...base, tasks: [{ title: 'Task', assignee: null, due_date }] } });
+    const f = fixture({ analysis: { ...base, tasks: [{ title: 'Task', assignee: null, due_date, due_in_days: null }] } });
     assert.equal((await f.request()).status, 200); assert.equal(f.storedTasks[0].due_date, due_date);
   }
 });
