@@ -154,12 +154,12 @@ function parseAnalysis(response: unknown, meetingDate: string, transcript: strin
   const tasks: MeetingAnalysis['tasks'] = [];
   for (const item of analysis.tasks) {
     if (!isRecord(item)) invalidAnalysis('task');
-    const title = item.title, assignee = item.assignee, days = item.due_in_days;
-    let date = item.due_date;
+    const title = item.title, assignee = item.assignee, days = item.due_in_days, date = item.due_date;
     if (typeof title !== 'string') invalidAnalysis('task_title');
     if (assignee !== null && typeof assignee !== 'string') invalidAnalysis('task_assignee');
     if (date !== null && (typeof date !== 'string' || !ISO_DATE.test(date)
       || !Number.isFinite(Date.parse(date)) || new Date(date).toISOString().slice(0, 10) !== date)) invalidAnalysis('task_due_date');
+    let dueDate: string | null = date;
     if (days !== null) {
       if (typeof days !== 'number' || !Number.isSafeInteger(days)) invalidAnalysis('task_due_in_days');
       // The anchor is a calendar date. UTC arithmetic here also handles DST transitions.
@@ -168,13 +168,13 @@ function parseAnalysis(response: unknown, meetingDate: string, transcript: strin
       if (!Number.isFinite(due.getTime())) invalidAnalysis('task_due_in_days');
       const day = due.toISOString().split('T')[0];
       if (!ISO_DATE.test(day)) invalidAnalysis('task_due_in_days');
-      date = day;
+      dueDate = day;
     } else if (typeof date === 'string') {
       // Preserve explicitly mentioned older years while discarding invented ones.
       const year = date.slice(0, 4);
-      if (year < meetingDate.slice(0, 4) && !new RegExp('\\b' + year + '\\b').test(transcript)) date = null;
+      if (year < meetingDate.slice(0, 4) && !new RegExp('\\b' + year + '\\b').test(transcript)) dueDate = null;
     }
-    tasks.push({ title, assignee, due_date: date });
+    tasks.push({ title, assignee, due_date: dueDate });
   }
   return { title: analysis.title, summary: analysis.summary, tasks };
 }
