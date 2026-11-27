@@ -2,7 +2,7 @@ name: CI
 
 on:
   push:
-    branches: [main, fix/zang-explicit-api-grants]
+    branches: [main, fix/zang-explicit-api-grants, fix/zang-stripe-sandbox]
   pull_request:
     branches: [main, fix/zang-production-hardening]
 
@@ -33,9 +33,9 @@ jobs:
           ZANG_BROWSER=webkit node tests/audio-api-browser.mjs
           node tests/iphone-qa-browser.mjs
           ZANG_BROWSER=webkit node tests/iphone-qa-browser.mjs
-      - run: node --test tests/regressions.test.mjs tests/process-meeting.test.mjs tests/cors.test.mjs tests/runtime-keys.test.mjs
+      - run: node --test tests/regressions.test.mjs tests/process-meeting.test.mjs tests/cors.test.mjs tests/runtime-keys.test.mjs tests/stripe-sandbox.test.mjs
       - name: Type-check Supabase Edge Functions
-        run: npm exec --yes --package=deno@2.9.6 -- deno check --no-lock supabase/functions/process-meeting/index.ts supabase/functions/export-tasks/index.ts
+        run: npm exec --yes --package=deno@2.9.6 -- deno check --no-lock supabase/functions/process-meeting/index.ts supabase/functions/export-tasks/index.ts supabase/functions/stripe-sandbox-checkout/index.ts supabase/functions/stripe-sandbox-webhook/index.ts
 
   migration-test:
     runs-on: ubuntu-24.04

@@ -1,6 +1,7 @@
 import { useAuth } from '../hooks/useAuth';
 import { useTheme } from '../hooks/useTheme';
 import { LanguageSwitcher } from '../components/LanguageSwitcher';
+import { StripeSandboxBilling, stripeSandboxEnabled } from '../components/StripeSandboxBilling';
 import { useI18n } from '../i18n/I18nProvider';
 import type { Theme } from '../types';
 
@@ -31,6 +32,7 @@ export function SettingsPage() {
           ))}
         </div>
       </section>
+      {stripeSandboxEnabled && user && <StripeSandboxBilling userId={user.id} />}
       <button className="btn btn-secondary btn-block" onClick={() => logout()}>{t.settings.logout}</button>
       <p style={{ textAlign: 'center', color: 'var(--muted)', marginTop: 24, fontSize: '0.85rem' }}>{t.settings.version}</p>
     </div>
