@@ -158,10 +158,13 @@ serve(async (req) => {
     // Supabase JWT and checks meeting ownership before using the service-role client.
     // Keep ALLOWED_ORIGIN optional because the documented setup does not require this secret.
     const configured = Deno.env.get('ALLOWED_ORIGIN');
-    const origin = configured ? new URL(configured).origin : '*';
+    const allowedOrigins = configured ? configured.split(',').map(value => new URL(value.trim()).origin) : [];
     const requestOrigin = req.headers.get('Origin');
-    headers = corsHeaders(requestOrigin === PR_PREVIEW_ORIGIN ? PR_PREVIEW_ORIGIN : origin);
-    if (configured && requestOrigin && requestOrigin !== origin && requestOrigin !== PR_PREVIEW_ORIGIN) return new Response('Origin not allowed', { status: 403, headers });
+    const allowedRequestOrigin = requestOrigin && (allowedOrigins.includes(requestOrigin) || requestOrigin === PR_PREVIEW_ORIGIN)
+      ? requestOrigin
+      : undefined;
+    headers = corsHeaders(allowedRequestOrigin ?? allowedOrigins[0] ?? '*');
+    if (configured && requestOrigin && !allowedRequestOrigin) return new Response('Origin not allowed', { status: 403, headers });
     if (req.method === 'OPTIONS') return new Response('ok', { headers });
     if (req.method !== 'POST') return new Response('Method not allowed', { status: 405, headers });
     if (!/^Bearer\s+\S+$/i.test(req.headers.get('Authorization') || '')) return new Response(JSON.stringify({ error: 'Unauthorized' }), { status: 401, headers });

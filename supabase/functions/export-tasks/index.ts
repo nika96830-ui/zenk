@@ -55,9 +55,12 @@ serve(async (req) => {
     // deployment setup does not silently disable exports when that extra secret is absent.
     const configuredOrigin = Deno.env.get('ALLOWED_ORIGIN');
     const requestOrigin = req.headers.get('Origin');
-    const origin = configuredOrigin ? new URL(configuredOrigin).origin : '*';
-    cors = corsHeaders(requestOrigin === PR_PREVIEW_ORIGIN ? PR_PREVIEW_ORIGIN : origin);
-    if (configuredOrigin && requestOrigin && requestOrigin !== origin && requestOrigin !== PR_PREVIEW_ORIGIN) {
+    const allowedOrigins = configuredOrigin ? configuredOrigin.split(',').map(value => new URL(value.trim()).origin) : [];
+    const allowedRequestOrigin = requestOrigin && (allowedOrigins.includes(requestOrigin) || requestOrigin === PR_PREVIEW_ORIGIN)
+      ? requestOrigin
+      : undefined;
+    cors = corsHeaders(allowedRequestOrigin ?? allowedOrigins[0] ?? '*');
+    if (configuredOrigin && requestOrigin && !allowedRequestOrigin) {
       return json({ success: false, message: 'ORIGIN_NOT_ALLOWED' }, 403, cors);
     }
     if (req.method === 'OPTIONS') return new Response('ok', { headers: cors });
