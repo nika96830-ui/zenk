@@ -9,3 +9,9 @@ verify_jwt = true
 
 [functions.export-tasks]
 verify_jwt = true
+
+[functions.stripe-sandbox-checkout]
+verify_jwt = true
+
+[functions.stripe-sandbox-webhook]
+verify_jwt = false
